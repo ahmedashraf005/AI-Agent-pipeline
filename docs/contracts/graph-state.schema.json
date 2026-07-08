@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AgentGraphState",
+  "description": "The LangGraph state object threaded through every node. Decided up front so Summarizer, Auditor, and the conditional edge all agree on shape before any node is implemented.",
+  "type": "object",
+  "required": ["job_id", "original_text", "draft_summary", "audit_verdict", "iteration_count"],
+  "properties": {
+    "job_id": { "type": "string", "format": "uuid" },
+    "original_text": {
+      "type": "string",
+      "description": "Immutable. Never overwritten by any node."
+    },
+    "draft_summary": {
+      "type": ["string", "null"],
+      "description": "Written by Summarizer node. Overwritten on each retry."
+    },
+    "audit_verdict": {
+      "type": ["object", "null"],
+      "description": "Structured (schema-validated) output from the Auditor node -- NEVER a freeform string. This is the prompt-injection defense: the routing decision reads verdict.status, not raw model text.",
+      "properties": {
+        "status": { "type": "string", "enum": ["VALID", "INVALID"] },
+        "reason": { "type": "string" }
+      },
+      "required": ["status", "reason"]
+    },
+    "iteration_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Incremented each time the conditional edge routes back to Summarizer. At 3, graph routes to HITL escrow instead of retrying again."
+    }
+  }
+}

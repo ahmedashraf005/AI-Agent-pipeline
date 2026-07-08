@@ -1,0 +1,35 @@
+# Local infra only: Redis (semantic cache) + SQL (state log).
+# Ollama is NOT containerized here — run it natively on macOS so it can use
+# Metal GPU acceleration. Containerized Ollama on Mac is CPU-only and slow.
+
+
+services:
+  redis:
+    image: redis/redis-stack:latest   # includes RediSearch module needed for vector similarity
+    container_name: agent-redis
+    ports:
+      - "6379:6379"
+      - "8001:8001"  # RedisInsight UI
+    volumes:
+      - redis-data:/data
+
+  # ARM64 (Apple Silicon) native alternative to SQL Server.
+  # If you're on an Intel Mac, swap this block for:
+  #   image: mcr.microsoft.com/mssql/server:2022-latest
+  #   environment:
+  #     - ACCEPT_EULA=Y
+  #     - MSSQL_SA_PASSWORD=YourStrong!Passw0rd
+  sql:
+    image: mcr.microsoft.com/azure-sql-edge:latest
+    container_name: agent-sql
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=YourStrong!Passw0rd
+    ports:
+      - "1433:1433"
+    volumes:
+      - sql-data:/var/opt/mssql
+
+volumes:
+  redis-data:
+  sql-data:

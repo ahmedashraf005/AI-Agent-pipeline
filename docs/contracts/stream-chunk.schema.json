@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "StreamChunk",
+  "description": "A single SSE event sent from Python -> .NET -> React. One 'type' governs how the frontend should render it.",
+  "type": "object",
+  "required": ["jobId", "type", "content"],
+  "properties": {
+    "jobId": { "type": "string", "format": "uuid" },
+    "type": {
+      "type": "string",
+      "enum": ["token", "status", "error"],
+      "description": "token = a piece of generated text to append. status = a JobStatus transition (see job-status-transitions.md). error = terminal failure, frontend should stop listening."
+    },
+    "content": {
+      "type": "string",
+      "description": "For type=token: the text fragment. For type=status: one of the JobStatus enum values. For type=error: human-readable error message (never a stack trace)."
+    }
+  }
+}
