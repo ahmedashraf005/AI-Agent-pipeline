@@ -1,0 +1,41 @@
+Note: Unnecessary use of -X or --request, POST is already inferred.
+* Host localhost:5001 was resolved.
+* IPv6: ::1
+* IPv4: 127.0.0.1
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0*   Trying [::1]:5001...
+* Connected to localhost (::1) port 5001
+> POST /api/jobs HTTP/1.1
+> Host: localhost:5001
+> User-Agent: curl/8.7.1
+> Accept: */*
+> Content-Type: application/json
+> Content-Length: 68
+> 
+} [68 bytes data]
+* upload completely sent off: 68 bytes
+< HTTP/1.1 200 OK
+< Content-Type: text/event-stream
+< Date: Thu, 09 Jul 2026 11:10:22 GMT
+< Server: Kestrel
+< Cache-Control: no-cache
+< Transfer-Encoding: chunked
+< 
+{ [145 bytes data]
+data: {"jobId": "aee81190-9de8-4bae-9882-aa8261b907a1", "type": "status", "content": "Queued \u2014 waiting for available capacity"}
+
+data: {"jobId": "aee81190-9de8-4bae-9882-aa8261b907a1", "type": "status", "content": "Processing"}
+
+100   302    0   234  100    68    133     38  0:00:01  0:00:01 --:--:--   172100   302    0   234  100    68     84     24  0:00:02  0:00:02 --:--:--   109100   302    0   234  100    68     62     18  0:00:03  0:00:03 --:--:--    80100   302    0   234  100    68     48     14  0:00:04  0:00:04 --:--:--    63100   302    0   234  100    68     40     11  0:00:06  0:00:05  0:00:01    52100   302    0   234  100    68     34     10  0:00:06  0:00:06 --:--:--     0100   302    0   234  100    68     30      8  0:00:08  0:00:07  0:00:01     0100   302    0   234  100    68     26      7  0:00:09  0:00:08  0:00:01     0100   302    0   234  100    68     23      6  0:00:11  0:00:09  0:00:02     0100   302    0   234  100    68     21      6  0:00:11  0:00:10  0:00:01     0100   302    0   234  100    68     19      5  0:00:13  0:00:11  0:00:02     0data: {"jobId": "aee81190-9de8-4bae-9882-aa8261b907a1", "type": "status", "content": "Drafting summary (attempt 1)"}
+
+100   420    0   352  100    68     29      5  0:00:13  0:00:11  0:00:02    28100   420    0   352  100    68     27      5  0:00:13  0:00:12  0:00:01    28100   420    0   352  100    68     25      4  0:00:17  0:00:13  0:00:04    29100   420    0   352  100    68     23      4  0:00:17  0:00:14  0:00:03    28100   420    0   352  100    68     22      4  0:00:17  0:00:15  0:00:02    28100   420    0   352  100    68     20      4  0:00:17  0:00:16  0:00:01     0100   420    0   352  100    68     19      3  0:00:22  0:00:17  0:00:05     0100   420    0   352  100    68     18      3  0:00:22  0:00:18  0:00:04     0100   420    0   352  100    68     17      3  0:00:22  0:00:19  0:00:03     0data: {"jobId": "aee81190-9de8-4bae-9882-aa8261b907a1", "type": "status", "content": "Audit result: VALID \u2014 ", "iterationCount": 1}
+
+data: {"jobId": "aee81190-9de8-4bae-9882-aa8261b907a1", "type": "status", "content": "Fact check passed"}
+
+data: {"jobId": "aee81190-9de8-4bae-9882-aa8261b907a1", "type": "status", "content": "Completed"}
+
+data: {"jobId": "aee81190-9de8-4bae-9882-aa8261b907a1", "type": "token", "content": "Here is a summary of the document in 3-5 sentences:\n\nA job titled \"C\" has a deadline for submitting a report on June 3. The payment for this job is $30,000."}
+
+100  1013    0   945  100    68     45      3  0:00:22  0:00:20  0:00:02   125
+* Connection #0 to host localhost left intact

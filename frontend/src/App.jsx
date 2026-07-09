@@ -14,7 +14,7 @@ export default function App() {
     setOutput('')
     setStatus('submitting')
 
-    const res = await fetch('http://localhost:5000/api/jobs', {
+    const res = await fetch('http://localhost:5001/api/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, fileName: 'manual-input.txt' }),

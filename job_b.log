@@ -1,0 +1,18 @@
+data: {"jobId": "8c3c580b-6825-4687-9fe9-59f7d6b25ec8", "type": "status", "content": "Queued \u2014 waiting for available capacity"}
+
+data: {"jobId": "8c3c580b-6825-4687-9fe9-59f7d6b25ec8", "type": "status", "content": "Processing"}
+
+data: {"jobId": "8c3c580b-6825-4687-9fe9-59f7d6b25ec8", "type": "status", "content": "Drafting summary (attempt 1)"}
+
+data: {"jobId": "8c3c580b-6825-4687-9fe9-59f7d6b25ec8", "type": "status", "content": "Audit result: INVALID \u2014 The summary mentions 'no other deadlines or monetary amounts mentioned' which is not present in the original document.", "iterationCount": 1}
+
+data: {"jobId": "8c3c580b-6825-4687-9fe9-59f7d6b25ec8", "type": "status", "content": "Drafting summary (attempt 2)"}
+
+data: {"jobId": "8c3c580b-6825-4687-9fe9-59f7d6b25ec8", "type": "status", "content": "Audit result: VALID \u2014 ", "iterationCount": 2}
+
+data: {"jobId": "8c3c580b-6825-4687-9fe9-59f7d6b25ec8", "type": "status", "content": "Fact check passed"}
+
+data: {"jobId": "8c3c580b-6825-4687-9fe9-59f7d6b25ec8", "type": "status", "content": "Completed"}
+
+data: {"jobId": "8c3c580b-6825-4687-9fe9-59f7d6b25ec8", "type": "token", "content": "Here is a summary of the document in 3-5 sentences:\n\nA job with a report due date of June 2 has been assigned, and payment of $20,000 will be made upon completion. There are no other deadlines or monetary amounts mentioned in this document. The only deadline mentioned is June 2 for submitting the report."}
+

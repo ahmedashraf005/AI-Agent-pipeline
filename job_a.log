@@ -1,0 +1,14 @@
+data: {"jobId": "96abd955-6a96-478c-baf6-13d34ed66b19", "type": "status", "content": "Queued \u2014 waiting for available capacity"}
+
+data: {"jobId": "96abd955-6a96-478c-baf6-13d34ed66b19", "type": "status", "content": "Processing"}
+
+data: {"jobId": "96abd955-6a96-478c-baf6-13d34ed66b19", "type": "status", "content": "Drafting summary (attempt 1)"}
+
+data: {"jobId": "96abd955-6a96-478c-baf6-13d34ed66b19", "type": "status", "content": "Audit result: VALID \u2014 ", "iterationCount": 1}
+
+data: {"jobId": "96abd955-6a96-478c-baf6-13d34ed66b19", "type": "status", "content": "Fact check passed"}
+
+data: {"jobId": "96abd955-6a96-478c-baf6-13d34ed66b19", "type": "status", "content": "Completed"}
+
+data: {"jobId": "96abd955-6a96-478c-baf6-13d34ed66b19", "type": "token", "content": "Here is a summary of the document in 3-5 sentences:\n\nThe report for Job A is due on June 1 and will be paid $10,000. This is the only deadline mentioned, which is for submitting the report. The payment amount is explicitly stated as $10,000."}
+

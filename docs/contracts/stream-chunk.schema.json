@@ -14,6 +14,11 @@
     "content": {
       "type": "string",
       "description": "For type=token: the text fragment. For type=status: one of the JobStatus enum values. For type=error: human-readable error message (never a stack trace)."
+    },
+    "iterationCount": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Optional. Present on status events emitted after the Auditor node runs, carrying the graph state's iteration_count so the Gateway can persist LoopIterations. Omitted or null for token/error events and status events before an iteration count is meaningful."
     }
   }
 }

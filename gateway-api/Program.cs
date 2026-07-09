@@ -1,13 +1,19 @@
-// WALKING SKELETON — Phase 0.
-// Purpose: prove every wire in the diagram connects end-to-end before any
-// real feature (LangGraph loop, auditor, cache) is built on top of it.
-// One hardcoded-ish request, one streamed response, nothing else.
-
-using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using GatewayApi.Data;
+using GatewayApi.Models;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("Default")));
+
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
+});
 
 builder.Services.AddCors(options =>
 {
@@ -28,12 +34,30 @@ app.UseCors();
 
 // POST /api/jobs  { "text": "..." , "fileName": "..." }
 // Streams Server-Sent Events straight through from the Python agent service.
-app.MapPost("/api/jobs", async (HttpContext ctx, JobRequest req, IHttpClientFactory httpFactory) =>
+app.MapPost("/api/jobs", async (
+    HttpContext ctx,
+    JobRequest req,
+    IHttpClientFactory httpFactory,
+    AppDbContext db) =>
 {
     var jobId = Guid.NewGuid();
+    var now = DateTime.UtcNow;
 
-    ctx.Response.Headers.Add("Content-Type", "text/event-stream");
-    ctx.Response.Headers.Add("Cache-Control", "no-cache");
+    var jobLog = new JobProcessingLog
+    {
+        JobId = jobId,
+        FileName = req.FileName,
+        Status = JobStatus.Pending,
+        RawText = req.Text,
+        CreatedAt = now,
+        UpdatedAt = now
+    };
+
+    db.JobProcessingLogs.Add(jobLog);
+    await db.SaveChangesAsync();
+
+    ctx.Response.Headers["Content-Type"] = "text/event-stream";
+    ctx.Response.Headers["Cache-Control"] = "no-cache";
 
     var client = httpFactory.CreateClient("AgentService");
 
@@ -46,32 +70,126 @@ app.MapPost("/api/jobs", async (HttpContext ctx, JobRequest req, IHttpClientFact
 
     using var content = new StringContent(payload, Encoding.UTF8, "application/json");
 
-    using var upstreamRequest = new HttpRequestMessage(HttpMethod.Post, "/process")
+    jobLog.Status = JobStatus.Processing;
+    jobLog.UpdatedAt = DateTime.UtcNow;
+    await db.SaveChangesAsync();
+
+    string? lastStatus = null;
+    string? lastToken = null;
+    int? lastIterationCount = null;
+
+    try
     {
-        Content = content
-    };
+        using var upstreamRequest = new HttpRequestMessage(HttpMethod.Post, "/process")
+        {
+            Content = content
+        };
 
-    using var upstreamResponse = await client.SendAsync(
-        upstreamRequest, HttpCompletionOption.ResponseHeadersRead);
+        using var upstreamResponse = await client.SendAsync(
+            upstreamRequest, HttpCompletionOption.ResponseHeadersRead);
 
-    await using var upstreamStream = await upstreamResponse.Content.ReadAsStreamAsync();
-    using var reader = new StreamReader(upstreamStream);
+        await using var upstreamStream = await upstreamResponse.Content.ReadAsStreamAsync();
+        using var reader = new StreamReader(upstreamStream);
 
-    // Naive pass-through relay: forward each SSE line from Python straight to the
-    // browser as it arrives. Real error/timeout handling belongs here later —
-    // this is intentionally the thin, unfeatured version (see project plan
-    // step 7: walking skeleton before real features).
-    while (!reader.EndOfStream)
-    {
-        var line = await reader.ReadLineAsync();
-        if (line is null) break;
-        await ctx.Response.WriteAsync(line + "\n");
-        await ctx.Response.Body.FlushAsync();
+        while (!reader.EndOfStream)
+        {
+            var line = await reader.ReadLineAsync();
+            if (line is null) break;
+
+            TrackStreamChunk(line, ref lastStatus, ref lastToken, ref lastIterationCount);
+
+            if (lastIterationCount is not null)
+            {
+                jobLog.LoopIterations = lastIterationCount.Value;
+            }
+
+            await ctx.Response.WriteAsync(line + "\n");
+            await ctx.Response.Body.FlushAsync();
+        }
+
+        jobLog.Status = MapFinalStatus(lastStatus);
+        jobLog.FinalSummary = lastToken;
+        if (lastIterationCount is not null)
+        {
+            jobLog.LoopIterations = lastIterationCount.Value;
+        }
+
+        jobLog.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
     }
+    catch
+    {
+        jobLog.Status = JobStatus.Failed;
+        jobLog.FinalSummary = lastToken;
+        if (lastIterationCount is not null)
+        {
+            jobLog.LoopIterations = lastIterationCount.Value;
+        }
+
+        jobLog.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+        throw;
+    }
+});
+
+app.MapGet("/api/jobs/{id:guid}", async (Guid id, AppDbContext db) =>
+{
+    var job = await db.JobProcessingLogs.FindAsync(id);
+    return job is null ? Results.NotFound() : Results.Ok(job);
 });
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
 app.Run();
 
+static void TrackStreamChunk(
+    string line,
+    ref string? lastStatus,
+    ref string? lastToken,
+    ref int? lastIterationCount)
+{
+    const string dataPrefix = "data: ";
+    if (!line.StartsWith(dataPrefix, StringComparison.Ordinal))
+    {
+        return;
+    }
+
+    var json = line[dataPrefix.Length..];
+
+    try
+    {
+        var chunk = JsonSerializer.Deserialize<StreamChunk>(
+            json,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+        if (chunk?.Type.Equals("status", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            lastStatus = chunk.Content;
+        }
+        else if (chunk?.Type.Equals("token", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            lastToken = chunk.Content;
+        }
+
+        if (chunk?.IterationCount is not null)
+        {
+            lastIterationCount = chunk.IterationCount;
+        }
+    }
+    catch (JsonException)
+    {
+        // Keep the relay tolerant of comments, keepalives, or malformed chunks.
+    }
+}
+
+static JobStatus MapFinalStatus(string? status) =>
+    status switch
+    {
+        "Completed" => JobStatus.Completed,
+        "AwaitingReview" => JobStatus.AwaitingReview,
+        _ => JobStatus.Failed
+    };
+
 record JobRequest(string Text, string FileName);
+
+record StreamChunk(string Type, string Content, int? IterationCount);
