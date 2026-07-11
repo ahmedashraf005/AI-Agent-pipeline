@@ -16,9 +16,13 @@ from typing import Literal
 from ollama import AsyncClient
 from pydantic import BaseModel, ValidationError
 
+from .cache import ensure_index, find_similar, store as _cache_store
 from .state import AgentGraphState, AuditVerdict
 
+ensure_index()  # safe to call at import time -- idempotent
+
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 client = AsyncClient()  # async client — a sync call here would block the whole
                         # FastAPI event loop while Ollama generates, which is
                         # exactly the concurrency bottleneck we flagged earlier.
@@ -35,6 +39,30 @@ _DATE_PATTERNS = [
 ]
 
 _DOLLAR_PATTERN = r"\$\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\$\d+(?:\.\d{2})?"
+
+
+async def cache_check_node(state: AgentGraphState) -> dict:
+    embedding_response = await client.embeddings(
+        model=EMBEDDING_MODEL,
+        prompt=state["original_text"],
+    )
+    embedding = embedding_response["embedding"]
+
+    cached_summary = find_similar(embedding)
+
+    if cached_summary is not None:
+        return {"draft_summary": cached_summary, "cache_hit": True}
+
+    return {"cache_hit": False}
+
+
+async def cache_store_node(state: AgentGraphState) -> dict:
+    embedding_response = await client.embeddings(
+        model=EMBEDDING_MODEL,
+        prompt=state["original_text"],
+    )
+    _cache_store(state["job_id"], embedding_response["embedding"], state["draft_summary"])
+    return {"draft_summary": state["draft_summary"]}
 
 
 def _extract_required_facts(text: str) -> list[str]:

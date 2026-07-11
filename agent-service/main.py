@@ -57,6 +57,7 @@ async def stream_summary(job: JobSubmission):
         "job_id": job.jobId,
         "original_text": job.text,
         "draft_summary": None,
+        "cache_hit": None,
         "audit_verdict": None,
         "fact_check_result": None,
         "iteration_count": 0,
@@ -75,7 +76,14 @@ async def stream_summary(job: JobSubmission):
                 for node_name, partial_update in update.items():
                     state.update(partial_update)
 
-                    if node_name == "summarizer":
+                    if node_name == "cache_check":
+                        logger.info("Job %s completed cache_check node", job.jobId)
+                        if state["cache_hit"]:
+                            yield sse_event(job.jobId, "status", "Cache hit — reusing prior summary")
+                        else:
+                            yield sse_event(job.jobId, "status", "Cache miss — drafting new summary")
+
+                    elif node_name == "summarizer":
                         logger.info("Job %s completed summarizer node", job.jobId)
                         attempt = state["iteration_count"] + 1
                         yield sse_event(job.jobId, "status", f"Drafting summary (attempt {attempt})")
@@ -100,6 +108,10 @@ async def stream_summary(job: JobSubmission):
                                 job.jobId, "status",
                                 f"Fact check failed: missing {missing}",
                             )
+
+                    elif node_name == "cache_store":
+                        logger.info("Job %s completed cache_store node", job.jobId)
+                        yield sse_event(job.jobId, "status", "Cached result for future reuse")
 
             verdict = state["audit_verdict"]
             fact_check = state["fact_check_result"]
