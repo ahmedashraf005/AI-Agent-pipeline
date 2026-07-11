@@ -152,15 +152,6 @@ async def auditor_node(state: AgentGraphState) -> dict:
                                       # creative one — it should give the same
                                       # verdict for the same input every time.
     )
-    
-
-    response = await client.chat(
-        model=OLLAMA_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        format="json",  # constrains Ollama's output to valid JSON grammar —
-                         # this plus the Pydantic parse below is the actual
-                         # prompt-injection defense, not the wording of the prompt.
-    )
 
     try:
         parsed = _AuditVerdictSchema.model_validate_json(response["message"]["content"])

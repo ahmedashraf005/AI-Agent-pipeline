@@ -28,22 +28,25 @@ def ensure_index() -> None:
     try:
         _redis_client.ft(INDEX_NAME).info()
     except Exception:
-        schema = (
-            TextField("draft_summary"),
-            VectorField(
-                "embedding",
-                "HNSW",
-                {
-                    "TYPE": "FLOAT32",
-                    "DIM": EMBEDDING_DIM,
-                    "DISTANCE_METRIC": "COSINE",
-                },
-            ),
-        )
-        _redis_client.ft(INDEX_NAME).create_index(
-            schema,
-            definition=IndexDefinition(prefix=[KEY_PREFIX], index_type=IndexType.HASH),
-        )
+        try:
+            schema = (
+                TextField("draft_summary"),
+                VectorField(
+                    "embedding",
+                    "HNSW",
+                    {
+                        "TYPE": "FLOAT32",
+                        "DIM": EMBEDDING_DIM,
+                        "DISTANCE_METRIC": "COSINE",
+                    },
+                ),
+            )
+            _redis_client.ft(INDEX_NAME).create_index(
+                schema,
+                definition=IndexDefinition(prefix=[KEY_PREFIX], index_type=IndexType.HASH),
+            )
+        except Exception:
+            pass
 
 
 def _to_vector_bytes(embedding: list) -> bytes:
@@ -75,6 +78,7 @@ def find_similar(embedding: list):
         return None
     except Exception:
         return None
+
 
 def store(job_id: str, embedding: list, draft_summary: str) -> None:
     """Best-effort cache write -- a failure here should never fail the
