@@ -11,6 +11,7 @@ VALID (or gives up after MAX_ITERATIONS and escalates).
 
 import asyncio
 import json
+import logging
 import os
 
 
@@ -23,6 +24,9 @@ from graph.graph import compiled_graph
 from graph.state import AgentGraphState
 
 load_dotenv()
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 MAX_CONCURRENT_JOBS = int(os.getenv("MAX_CONCURRENT_JOBS", "2"))
 job_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
@@ -63,6 +67,7 @@ async def stream_summary(job: JobSubmission):
     yield sse_event(job.jobId, "status", "Queued — waiting for available capacity")
 
     async with job_semaphore:
+        logger.info("Job %s started processing", job.jobId)
         yield sse_event(job.jobId, "status", "Processing")
 
         try:
@@ -71,10 +76,12 @@ async def stream_summary(job: JobSubmission):
                     state.update(partial_update)
 
                     if node_name == "summarizer":
+                        logger.info("Job %s completed summarizer node", job.jobId)
                         attempt = state["iteration_count"] + 1
                         yield sse_event(job.jobId, "status", f"Drafting summary (attempt {attempt})")
 
                     elif node_name == "auditor":
+                        logger.info("Job %s completed auditor node", job.jobId)
                         verdict = state["audit_verdict"]
                         yield sse_event(
                             job.jobId, "status",
@@ -83,6 +90,7 @@ async def stream_summary(job: JobSubmission):
                         )
 
                     elif node_name == "fact_checker":
+                        logger.info("Job %s completed fact_checker node", job.jobId)
                         result = state["fact_check_result"]
                         if result["status"] == "PASS":
                             yield sse_event(job.jobId, "status", "Fact check passed")

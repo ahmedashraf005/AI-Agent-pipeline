@@ -32,7 +32,7 @@ builder.Services.AddHttpClient("AgentService", client =>
 var app = builder.Build();
 app.UseCors();
 
-// POST /api/jobs  { "text": "..." , "fileName": "..." }
+// POST /api/jobs  { "jobId": "...", "text": "...", "fileName": "..." }
 // Streams Server-Sent Events straight through from the Python agent service.
 app.MapPost("/api/jobs", async (
     HttpContext ctx,
@@ -40,7 +40,45 @@ app.MapPost("/api/jobs", async (
     IHttpClientFactory httpFactory,
     AppDbContext db) =>
 {
-    var jobId = Guid.NewGuid();
+    var jobId = req.JobId ?? Guid.NewGuid();
+    var existingJob = await db.JobProcessingLogs.FindAsync(jobId);
+
+    if (existingJob is not null && IsTerminal(existingJob.Status))
+    {
+        app.Logger.LogInformation(
+            "Job {JobId} received, status={Status}",
+            jobId,
+            "duplicate-terminal");
+
+        ctx.Response.Headers["Content-Type"] = "text/event-stream";
+        ctx.Response.Headers["Cache-Control"] = "no-cache";
+
+        await WriteSseEvent(ctx, jobId, "status", existingJob.Status.ToString());
+        await WriteSseEvent(ctx, jobId, "token", existingJob.FinalSummary ?? "");
+
+        return Results.Empty;
+    }
+
+    if (existingJob is not null)
+    {
+        app.Logger.LogInformation(
+            "Job {JobId} received, status={Status}",
+            jobId,
+            "duplicate-in-flight");
+
+        return Results.Conflict(new
+        {
+            jobId,
+            status = existingJob.Status.ToString(),
+            message = "Job is already in progress."
+        });
+    }
+
+    app.Logger.LogInformation(
+        "Job {JobId} received, status={Status}",
+        jobId,
+        "new");
+
     var now = DateTime.UtcNow;
 
     var jobLog = new JobProcessingLog
@@ -116,6 +154,10 @@ app.MapPost("/api/jobs", async (
 
         jobLog.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync();
+        app.Logger.LogInformation(
+            "Job {JobId} final status persisted, finalStatus={FinalStatus}",
+            jobId,
+            jobLog.Status);
     }
     catch
     {
@@ -128,8 +170,14 @@ app.MapPost("/api/jobs", async (
 
         jobLog.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync();
+        app.Logger.LogInformation(
+            "Job {JobId} final status persisted, finalStatus={FinalStatus}",
+            jobId,
+            jobLog.Status);
         throw;
     }
+
+    return Results.Empty;
 });
 
 app.MapGet("/api/jobs/{id:guid}", async (Guid id, AppDbContext db) =>
@@ -190,6 +238,26 @@ static JobStatus MapFinalStatus(string? status) =>
         _ => JobStatus.Failed
     };
 
-record JobRequest(string Text, string FileName);
+static bool IsTerminal(JobStatus status) =>
+    status is JobStatus.Completed or JobStatus.AwaitingReview or JobStatus.Failed;
+
+static async Task WriteSseEvent(
+    HttpContext ctx,
+    Guid jobId,
+    string eventType,
+    string content)
+{
+    var payload = JsonSerializer.Serialize(new
+    {
+        jobId = jobId.ToString(),
+        type = eventType,
+        content
+    });
+
+    await ctx.Response.WriteAsync($"data: {payload}\n\n");
+    await ctx.Response.Body.FlushAsync();
+}
+
+record JobRequest(string Text, string FileName, Guid? JobId);
 
 record StreamChunk(string Type, string Content, int? IterationCount);

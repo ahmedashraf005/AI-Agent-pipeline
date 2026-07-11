@@ -9,16 +9,26 @@ export default function App() {
   const [text, setText] = useState('The quarterly report is due Friday. All vendors must submit invoices by EOD.')
   const [output, setOutput] = useState('')
   const [status, setStatus] = useState('idle')
+  const [jobId, setJobId] = useState('')
 
   async function submit() {
+    const nextJobId = crypto.randomUUID()
+
     setOutput('')
     setStatus('submitting')
+    setJobId(nextJobId)
 
     const res = await fetch('http://localhost:5001/api/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, fileName: 'manual-input.txt' }),
+      body: JSON.stringify({ jobId: nextJobId, text, fileName: 'manual-input.txt' }),
     })
+
+    if (!res.ok) {
+      const error = await res.json()
+      setStatus(`Error: ${error.message ?? res.statusText}`)
+      return
+    }
 
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
@@ -52,6 +62,7 @@ export default function App() {
         Submit
       </button>
       <p>Status: {status}</p>
+      {jobId && <p>Job ID: {jobId}</p>}
       <pre style={{ whiteSpace: 'pre-wrap' }}>{output}</pre>
     </div>
   )
