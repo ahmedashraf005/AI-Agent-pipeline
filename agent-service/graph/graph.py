@@ -6,6 +6,10 @@ state, what runs next?" Read top to bottom, it should read almost like
 the plain-English description from the original blueprint:
   Cache check -> Summarizer? -> Auditor -> Fact check -> Cache store?
 """
+from pathlib import Path
+from typing import Any
+
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import StateGraph, END
 
 from .nodes import (
@@ -18,6 +22,11 @@ from .nodes import (
 from .state import AgentGraphState
 
 MAX_ITERATIONS = 3
+CHECKPOINT_DB_PATH = Path(__file__).resolve().parents[1] / "checkpoints.db"
+
+_checkpoint_context = None
+_checkpointer: AsyncSqliteSaver | None = None
+compiled_graph: Any = None
 
 
 def route_after_cache_check(state: AgentGraphState) -> str:
@@ -89,4 +98,46 @@ _builder.add_conditional_edges(
 
 _builder.add_edge("cache_store", END)
 
-compiled_graph = _builder.compile()
+
+async def initialize_checkpointer() -> None:
+    global _checkpoint_context, _checkpointer, compiled_graph
+
+    if compiled_graph is not None:
+        return
+
+    _checkpoint_context = AsyncSqliteSaver.from_conn_string(str(CHECKPOINT_DB_PATH))
+    _checkpointer = await _checkpoint_context.__aenter__()
+    await _checkpointer.setup()
+    compiled_graph = _builder.compile(checkpointer=_checkpointer)
+
+
+async def close_checkpointer() -> None:
+    global _checkpoint_context, _checkpointer, compiled_graph
+
+    if _checkpoint_context is not None:
+        await _checkpoint_context.__aexit__(None, None, None)
+
+    _checkpoint_context = None
+    _checkpointer = None
+    compiled_graph = None
+
+
+def thread_config(job_id: str) -> dict:
+    return {"configurable": {"thread_id": job_id}}
+
+
+def get_compiled_graph():
+    if compiled_graph is None:
+        raise RuntimeError("LangGraph checkpointer has not been initialized.")
+
+    return compiled_graph
+
+
+async def get_checkpoint_tuple(config: dict):
+    if _checkpointer is None:
+        await initialize_checkpointer()
+
+    if _checkpointer is None:
+        raise RuntimeError("LangGraph checkpointer has not been initialized.")
+
+    return await _checkpointer.aget_tuple(config)

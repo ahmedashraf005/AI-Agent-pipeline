@@ -1,0 +1,10 @@
+INFO:     Started server process [88128]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:55269 - "POST /process HTTP/1.1" 200 OK
+INFO:main:Job aabbccdd-aabb-ccdd-aabb-ccddaabbccdd started processing
+INFO:httpx:HTTP Request: POST http://127.0.0.1:11434/api/embeddings "HTTP/1.1 200 OK"
+INFO:main:Job aabbccdd-aabb-ccdd-aabb-ccddaabbccdd completed cache_check node
+INFO:httpx:HTTP Request: POST http://127.0.0.1:11434/api/chat "HTTP/1.1 200 OK"
+INFO:main:Job aabbccdd-aabb-ccdd-aabb-ccddaabbccdd completed summarizer node

@@ -1,0 +1,8 @@
+data: {"jobId": "aabbccdd-aabb-ccdd-aabb-ccddaabbccdd", "type": "status", "content": "Queued \u2014 waiting for available capacity"}
+
+data: {"jobId": "aabbccdd-aabb-ccdd-aabb-ccddaabbccdd", "type": "status", "content": "Processing"}
+
+data: {"jobId": "aabbccdd-aabb-ccdd-aabb-ccddaabbccdd", "type": "status", "content": "Cache miss \u2014 drafting new summary"}
+
+data: {"jobId": "aabbccdd-aabb-ccdd-aabb-ccddaabbccdd", "type": "status", "content": "Drafting summary (attempt 1)"}
+

@@ -20,7 +20,13 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from graph.graph import compiled_graph
+from graph.graph import (
+    close_checkpointer,
+    get_checkpoint_tuple,
+    get_compiled_graph,
+    initialize_checkpointer,
+    thread_config,
+)
 from graph.state import AgentGraphState
 
 load_dotenv()
@@ -53,7 +59,10 @@ def sse_event(
 
 
 async def stream_summary(job: JobSubmission):
-    initial_state: AgentGraphState = {
+    config = thread_config(job.jobId)
+    checkpoint = await get_checkpoint_tuple(config)
+
+    base_state: AgentGraphState = {
         "job_id": job.jobId,
         "original_text": job.text,
         "draft_summary": None,
@@ -63,7 +72,17 @@ async def stream_summary(job: JobSubmission):
         "iteration_count": 0,
     }
 
-    state = dict(initial_state)  # our running copy, updated as nodes complete
+    graph_input: AgentGraphState | None
+    graph = get_compiled_graph()
+
+    if checkpoint is not None:
+        yield sse_event(job.jobId, "status", "Resuming from checkpoint (crash recovery)")
+        snapshot = await graph.aget_state(config)
+        state = {**base_state, **snapshot.values}
+        graph_input = None
+    else:
+        state = dict(base_state)  # our running copy, updated as nodes complete
+        graph_input = base_state
 
     yield sse_event(job.jobId, "status", "Queued — waiting for available capacity")
 
@@ -72,7 +91,7 @@ async def stream_summary(job: JobSubmission):
         yield sse_event(job.jobId, "status", "Processing")
 
         try:
-            async for update in compiled_graph.astream(initial_state):
+            async for update in graph.astream(graph_input, config=config):
                 for node_name, partial_update in update.items():
                     state.update(partial_update)
 
@@ -133,6 +152,16 @@ async def stream_summary(job: JobSubmission):
 
 
 app = FastAPI()
+
+
+@app.on_event("startup")
+async def startup() -> None:
+    await initialize_checkpointer()
+
+
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    await close_checkpointer()
 
 
 @app.post("/process")

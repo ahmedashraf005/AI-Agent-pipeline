@@ -7,6 +7,8 @@ agent-service/__pycache__/
 agent-service/.venv/
 agent-service/*.pyc
 agent-service/.env
+agent-service/checkpoints.db
+agent-service/checkpoints.db-*
 
 # Node
 frontend/node_modules/

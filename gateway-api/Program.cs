@@ -32,6 +32,8 @@ builder.Services.AddHttpClient("AgentService", client =>
 var app = builder.Build();
 app.UseCors();
 
+const int StaleJobThresholdSeconds = 30;
+
 // POST /api/jobs  { "jobId": "...", "text": "...", "fileName": "..." }
 // Streams Server-Sent Events straight through from the Python agent service.
 app.MapPost("/api/jobs", async (
@@ -41,6 +43,7 @@ app.MapPost("/api/jobs", async (
     AppDbContext db) =>
 {
     var jobId = req.JobId ?? Guid.NewGuid();
+    var now = DateTime.UtcNow;
     var existingJob = await db.JobProcessingLogs.FindAsync(jobId);
 
     if (existingJob is not null && IsTerminal(existingJob.Status))
@@ -59,7 +62,8 @@ app.MapPost("/api/jobs", async (
         return Results.Empty;
     }
 
-    if (existingJob is not null)
+    if (existingJob is not null
+        && existingJob.UpdatedAt > now.AddSeconds(-StaleJobThresholdSeconds))
     {
         app.Logger.LogInformation(
             "Job {JobId} received, status={Status}",
@@ -74,25 +78,42 @@ app.MapPost("/api/jobs", async (
         });
     }
 
-    app.Logger.LogInformation(
-        "Job {JobId} received, status={Status}",
-        jobId,
-        "new");
-
-    var now = DateTime.UtcNow;
-
-    var jobLog = new JobProcessingLog
+    JobProcessingLog jobLog;
+    if (existingJob is not null)
     {
-        JobId = jobId,
-        FileName = req.FileName,
-        Status = JobStatus.Pending,
-        RawText = req.Text,
-        CreatedAt = now,
-        UpdatedAt = now
-    };
+        app.Logger.LogInformation(
+            "Job {JobId} received, status={Status}",
+            jobId,
+            "duplicate-stale-resume");
 
-    db.JobProcessingLogs.Add(jobLog);
-    await db.SaveChangesAsync();
+        existingJob.FileName = req.FileName;
+        existingJob.RawText = req.Text;
+        existingJob.Status = JobStatus.Processing;
+        existingJob.UpdatedAt = now;
+        await db.SaveChangesAsync();
+
+        jobLog = existingJob;
+    }
+    else
+    {
+        app.Logger.LogInformation(
+            "Job {JobId} received, status={Status}",
+            jobId,
+            "new");
+
+        jobLog = new JobProcessingLog
+        {
+            JobId = jobId,
+            FileName = req.FileName,
+            Status = JobStatus.Pending,
+            RawText = req.Text,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        db.JobProcessingLogs.Add(jobLog);
+        await db.SaveChangesAsync();
+    }
 
     ctx.Response.Headers["Content-Type"] = "text/event-stream";
     ctx.Response.Headers["Cache-Control"] = "no-cache";
@@ -112,8 +133,9 @@ app.MapPost("/api/jobs", async (
     jobLog.UpdatedAt = DateTime.UtcNow;
     await db.SaveChangesAsync();
 
-    string? lastStatus = null;
+    JobStatus? explicitTerminalStatus = null;
     string? lastToken = null;
+    string? explicitErrorMessage = null;
     int? lastIterationCount = null;
 
     try
@@ -134,7 +156,12 @@ app.MapPost("/api/jobs", async (
             var line = await reader.ReadLineAsync();
             if (line is null) break;
 
-            TrackStreamChunk(line, ref lastStatus, ref lastToken, ref lastIterationCount);
+            TrackStreamChunk(
+                line,
+                ref explicitTerminalStatus,
+                ref lastToken,
+                ref explicitErrorMessage,
+                ref lastIterationCount);
 
             if (lastIterationCount is not null)
             {
@@ -144,38 +171,45 @@ app.MapPost("/api/jobs", async (
             await ctx.Response.WriteAsync(line + "\n");
             await ctx.Response.Body.FlushAsync();
         }
-
-        jobLog.Status = MapFinalStatus(lastStatus);
-        jobLog.FinalSummary = lastToken;
-        if (lastIterationCount is not null)
-        {
-            jobLog.LoopIterations = lastIterationCount.Value;
-        }
-
-        jobLog.UpdatedAt = DateTime.UtcNow;
-        await db.SaveChangesAsync();
-        app.Logger.LogInformation(
-            "Job {JobId} final status persisted, finalStatus={FinalStatus}",
-            jobId,
-            jobLog.Status);
     }
-    catch
+    catch (Exception exc)
+    {
+        app.Logger.LogWarning(
+            exc,
+            "Job {JobId} stream relay threw; finalization will use any explicit terminal signal seen",
+            jobId);
+    }
+
+    if (explicitTerminalStatus is not null)
+    {
+        jobLog.Status = explicitTerminalStatus.Value;
+        jobLog.FinalSummary = lastToken;
+    }
+    else if (explicitErrorMessage is not null)
     {
         jobLog.Status = JobStatus.Failed;
-        jobLog.FinalSummary = lastToken;
-        if (lastIterationCount is not null)
-        {
-            jobLog.LoopIterations = lastIterationCount.Value;
-        }
-
-        jobLog.UpdatedAt = DateTime.UtcNow;
-        await db.SaveChangesAsync();
-        app.Logger.LogInformation(
-            "Job {JobId} final status persisted, finalStatus={FinalStatus}",
-            jobId,
-            jobLog.Status);
-        throw;
+        jobLog.FinalSummary = explicitErrorMessage;
     }
+    else
+    {
+        app.Logger.LogInformation(
+            "Job {JobId} stream ended without terminal status; status remains Processing",
+            jobId);
+
+        return Results.Empty;
+    }
+
+    if (lastIterationCount is not null)
+    {
+        jobLog.LoopIterations = lastIterationCount.Value;
+    }
+
+    jobLog.UpdatedAt = DateTime.UtcNow;
+    await db.SaveChangesAsync();
+    app.Logger.LogInformation(
+        "Job {JobId} final status persisted, finalStatus={FinalStatus}",
+        jobId,
+        jobLog.Status);
 
     return Results.Empty;
 });
@@ -192,8 +226,9 @@ app.Run();
 
 static void TrackStreamChunk(
     string line,
-    ref string? lastStatus,
+    ref JobStatus? explicitTerminalStatus,
     ref string? lastToken,
+    ref string? explicitErrorMessage,
     ref int? lastIterationCount)
 {
     const string dataPrefix = "data: ";
@@ -212,11 +247,20 @@ static void TrackStreamChunk(
 
         if (chunk?.Type.Equals("status", StringComparison.OrdinalIgnoreCase) == true)
         {
-            lastStatus = chunk.Content;
+            explicitTerminalStatus = chunk.Content switch
+            {
+                "Completed" => JobStatus.Completed,
+                "AwaitingReview" => JobStatus.AwaitingReview,
+                _ => explicitTerminalStatus
+            };
         }
         else if (chunk?.Type.Equals("token", StringComparison.OrdinalIgnoreCase) == true)
         {
             lastToken = chunk.Content;
+        }
+        else if (chunk?.Type.Equals("error", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            explicitErrorMessage = chunk.Content;
         }
 
         if (chunk?.IterationCount is not null)
@@ -229,14 +273,6 @@ static void TrackStreamChunk(
         // Keep the relay tolerant of comments, keepalives, or malformed chunks.
     }
 }
-
-static JobStatus MapFinalStatus(string? status) =>
-    status switch
-    {
-        "Completed" => JobStatus.Completed,
-        "AwaitingReview" => JobStatus.AwaitingReview,
-        _ => JobStatus.Failed
-    };
 
 static bool IsTerminal(JobStatus status) =>
     status is JobStatus.Completed or JobStatus.AwaitingReview or JobStatus.Failed;
