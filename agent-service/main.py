@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import uuid
 from typing import Literal
 
 
@@ -20,6 +21,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from redis import asyncio as redis_async
 
 from graph.graph import (
     close_checkpointer,
@@ -28,6 +30,7 @@ from graph.graph import (
     initialize_checkpointer,
     thread_config,
 )
+from graph.cache import LOCK_REDIS_URL
 from graph.state import AgentGraphState
 
 load_dotenv()
@@ -37,6 +40,15 @@ logger = logging.getLogger(__name__)
 
 MAX_CONCURRENT_JOBS = int(os.getenv("MAX_CONCURRENT_JOBS", "2"))
 job_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
+INSTANCE_ID = str(uuid.uuid4())
+JOB_LOCK_TTL_SECONDS = 120
+_lock_client = redis_async.from_url(LOCK_REDIS_URL, decode_responses=True)
+_RELEASE_LOCK_SCRIPT = """
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("DEL", KEYS[1])
+end
+return 0
+"""
 
 
 class JobSubmission(BaseModel):
@@ -61,121 +73,158 @@ def sse_event(
     return f"data: {json.dumps(payload)}\n\n"
 
 
+def job_lock_key(job_id: str) -> str:
+    return f"lock:job:{job_id}"
+
+
+async def acquire_job_lock(job_id: str) -> bool:
+    return bool(
+        await _lock_client.set(
+            job_lock_key(job_id),
+            INSTANCE_ID,
+            nx=True,
+            ex=JOB_LOCK_TTL_SECONDS,
+        )
+    )
+
+
+async def release_job_lock(job_id: str) -> None:
+    try:
+        await _lock_client.eval(_RELEASE_LOCK_SCRIPT, 1, job_lock_key(job_id), INSTANCE_ID)
+    except Exception:  # noqa: BLE001 — best-effort cleanup after the graph run
+        logger.warning("Job %s lock release failed", job_id, exc_info=True)
+
+
 async def stream_summary(job: JobSubmission):
-    config = thread_config(job.jobId)
-    checkpoint = await get_checkpoint_tuple(config)
-
-    base_state: AgentGraphState = {
-        "job_id": job.jobId,
-        "original_text": job.text,
-        "draft_summary": None,
-        "cache_hit": None,
-        "audit_verdict": None,
-        "fact_check_result": None,
-        "iteration_count": 0,
-        "output_format": job.output_format,
-        "output_language": job.output_language.lower(),
-        "translation_verified": None,
-        "format_verified": None,
-    }
-
-    graph_input: AgentGraphState | None
-    graph = get_compiled_graph()
-
-    if checkpoint is not None:
-        yield sse_event(job.jobId, "status", "Resuming from checkpoint (crash recovery)")
-        snapshot = await graph.aget_state(config)
-        state = {**base_state, **snapshot.values}
-        graph_input = None
-    else:
-        state = dict(base_state)  # our running copy, updated as nodes complete
-        graph_input = base_state
-
     yield sse_event(job.jobId, "status", "Queued — waiting for available capacity")
 
     async with job_semaphore:
-        logger.info("Job %s started processing", job.jobId)
-        yield sse_event(job.jobId, "status", "Processing")
+        try:
+            lock_acquired = await acquire_job_lock(job.jobId)
+        except Exception as exc:  # noqa: BLE001 — lock is required for correctness
+            logger.warning("Job %s lock acquisition failed", job.jobId, exc_info=True)
+            yield sse_event(job.jobId, "error", f"Job lock could not be acquired: {exc}")
+            return
+
+        if not lock_acquired:
+            logger.info("Job %s rejected because another instance holds the lock", job.jobId)
+            yield sse_event(job.jobId, "error", "Job is already being processed by another instance")
+            return
 
         try:
-            async for update in graph.astream(graph_input, config=config):
-                for node_name, partial_update in update.items():
-                    state.update(partial_update)
+            config = thread_config(job.jobId)
+            checkpoint = await get_checkpoint_tuple(config)
 
-                    if node_name == "cache_check":
-                        logger.info("Job %s completed cache_check node", job.jobId)
-                        if state["cache_hit"]:
-                            yield sse_event(job.jobId, "status", "Cache hit — reusing prior summary")
-                        else:
-                            yield sse_event(job.jobId, "status", "Cache miss — drafting new summary")
+            base_state: AgentGraphState = {
+                "job_id": job.jobId,
+                "original_text": job.text,
+                "draft_summary": None,
+                "cache_hit": None,
+                "audit_verdict": None,
+                "fact_check_result": None,
+                "iteration_count": 0,
+                "output_format": job.output_format,
+                "output_language": job.output_language.lower(),
+                "translation_verified": None,
+                "format_verified": None,
+            }
 
-                    elif node_name == "summarizer":
-                        logger.info("Job %s completed summarizer node", job.jobId)
-                        attempt = state["iteration_count"] + 1
-                        yield sse_event(job.jobId, "status", f"Drafting summary (attempt {attempt})")
+            graph_input: AgentGraphState | None
+            graph = get_compiled_graph()
 
-                    elif node_name == "auditor":
-                        logger.info("Job %s completed auditor node", job.jobId)
-                        verdict = state["audit_verdict"]
-                        yield sse_event(
-                            job.jobId, "status",
-                            f"Audit result: {verdict['status']} — {verdict['reason']}",
-                            state["iteration_count"],
-                        )
+            if checkpoint is not None:
+                yield sse_event(job.jobId, "status", "Resuming from checkpoint (crash recovery)")
+                snapshot = await graph.aget_state(config)
+                state = {**base_state, **snapshot.values}
+                graph_input = None
+            else:
+                state = dict(base_state)  # our running copy, updated as nodes complete
+                graph_input = base_state
 
-                    elif node_name == "fact_checker":
-                        logger.info("Job %s completed fact_checker node", job.jobId)
-                        result = state["fact_check_result"]
-                        if result["status"] == "PASS":
-                            yield sse_event(job.jobId, "status", "Fact check passed")
-                        else:
-                            missing = ", ".join(result["missing_facts"])
+            logger.info("Job %s started processing", job.jobId)
+            yield sse_event(job.jobId, "status", "Processing")
+
+            try:
+                async for update in graph.astream(graph_input, config=config):
+                    for node_name, partial_update in update.items():
+                        state.update(partial_update)
+
+                        if node_name == "cache_check":
+                            logger.info("Job %s completed cache_check node", job.jobId)
+                            if state["cache_hit"]:
+                                yield sse_event(job.jobId, "status", "Cache hit — reusing prior summary")
+                            else:
+                                yield sse_event(job.jobId, "status", "Cache miss — drafting new summary")
+
+                        elif node_name == "summarizer":
+                            logger.info("Job %s completed summarizer node", job.jobId)
+                            attempt = state["iteration_count"] + 1
+                            yield sse_event(job.jobId, "status", f"Drafting summary (attempt {attempt})")
+
+                        elif node_name == "auditor":
+                            logger.info("Job %s completed auditor node", job.jobId)
+                            verdict = state["audit_verdict"]
                             yield sse_event(
                                 job.jobId, "status",
-                                f"Fact check failed: missing {missing}",
+                                f"Audit result: {verdict['status']} — {verdict['reason']}",
+                                state["iteration_count"],
                             )
 
-                    elif node_name == "cache_store":
-                        logger.info("Job %s completed cache_store node", job.jobId)
-                        yield sse_event(job.jobId, "status", "Cached result for future reuse")
+                        elif node_name == "fact_checker":
+                            logger.info("Job %s completed fact_checker node", job.jobId)
+                            result = state["fact_check_result"]
+                            if result["status"] == "PASS":
+                                yield sse_event(job.jobId, "status", "Fact check passed")
+                            else:
+                                missing = ", ".join(result["missing_facts"])
+                                yield sse_event(
+                                    job.jobId, "status",
+                                    f"Fact check failed: missing {missing}",
+                                )
 
-                    elif node_name == "format_node" and state["output_format"] == "bullets":
-                        logger.info("Job %s completed format_node", job.jobId)
-                        yield sse_event(job.jobId, "status", "Reformatting summary")
-                        if state["format_verified"]:
-                            yield sse_event(job.jobId, "status", "Reformat verified")
-                        else:
-                            yield sse_event(job.jobId, "status", "Reformat check failed, kept original")
+                        elif node_name == "cache_store":
+                            logger.info("Job %s completed cache_store node", job.jobId)
+                            yield sse_event(job.jobId, "status", "Cached result for future reuse")
 
-                    elif node_name == "translate_node" and state["output_language"] != "en":
-                        logger.info("Job %s completed translate_node", job.jobId)
-                        yield sse_event(job.jobId, "status", "Translating summary")
-                        if state["translation_verified"]:
-                            yield sse_event(job.jobId, "status", "Translation verified")
-                        else:
-                            yield sse_event(
-                                job.jobId,
-                                "status",
-                                "Translation verified: could not confirm all figures",
-                            )
+                        elif node_name == "format_node" and state["output_format"] == "bullets":
+                            logger.info("Job %s completed format_node", job.jobId)
+                            yield sse_event(job.jobId, "status", "Reformatting summary")
+                            if state["format_verified"]:
+                                yield sse_event(job.jobId, "status", "Reformat verified")
+                            else:
+                                yield sse_event(job.jobId, "status", "Reformat check failed, kept original")
 
-            verdict = state["audit_verdict"]
-            fact_check = state["fact_check_result"]
-            if (
-                verdict
-                and verdict["status"] == "VALID"
-                and fact_check
-                and fact_check["status"] == "PASS"
-            ):
-                yield sse_event(job.jobId, "status", "Completed")
-            else:
-                # Either retries were exhausted or deterministic verification failed.
-                yield sse_event(job.jobId, "status", "AwaitingReview")
+                        elif node_name == "translate_node" and state["output_language"] != "en":
+                            logger.info("Job %s completed translate_node", job.jobId)
+                            yield sse_event(job.jobId, "status", "Translating summary")
+                            if state["translation_verified"]:
+                                yield sse_event(job.jobId, "status", "Translation verified")
+                            else:
+                                yield sse_event(
+                                    job.jobId,
+                                    "status",
+                                    "Translation verified: could not confirm all figures",
+                                )
 
-            yield sse_event(job.jobId, "token", state["draft_summary"] or "")
+                verdict = state["audit_verdict"]
+                fact_check = state["fact_check_result"]
+                if (
+                    verdict
+                    and verdict["status"] == "VALID"
+                    and fact_check
+                    and fact_check["status"] == "PASS"
+                ):
+                    yield sse_event(job.jobId, "status", "Completed")
+                else:
+                    # Either retries were exhausted or deterministic verification failed.
+                    yield sse_event(job.jobId, "status", "AwaitingReview")
 
-        except Exception as exc:  # noqa: BLE001 — still a broad catch at this stage
-            yield sse_event(job.jobId, "error", str(exc))
+                yield sse_event(job.jobId, "token", state["draft_summary"] or "")
+
+            except Exception as exc:  # noqa: BLE001 — still a broad catch at this stage
+                yield sse_event(job.jobId, "error", str(exc))
+        finally:
+            await release_job_lock(job.jobId)
 
 
 app = FastAPI()
@@ -189,6 +238,7 @@ async def startup() -> None:
 @app.on_event("shutdown")
 async def shutdown() -> None:
     await close_checkpointer()
+    await _lock_client.aclose()
 
 
 @app.post("/process")

@@ -4,6 +4,7 @@ ADR-0001 (cache hits still pass through the Auditor, never bypass it
 outright) and ADR-0006 (this implementation's specific choices).
 """
 import os
+from urllib.parse import urlsplit, urlunsplit
 
 import numpy as np
 import redis
@@ -19,7 +20,17 @@ SIMILARITY_THRESHOLD = 0.95  # matches the original blueprint's >95% bar
 INDEX_NAME = "doc_cache_idx"
 KEY_PREFIX = "doc:"
 
-_redis_client = redis.from_url(REDIS_URL)
+
+def redis_url_for_db(db_index: int) -> str:
+    parts = urlsplit(REDIS_URL)
+    return urlunsplit((parts.scheme, parts.netloc, f"/{db_index}", parts.query, parts.fragment))
+
+
+CACHE_REDIS_URL = redis_url_for_db(0)
+CHECKPOINT_REDIS_URL = redis_url_for_db(0)
+LOCK_REDIS_URL = redis_url_for_db(1)
+
+_redis_client = redis.from_url(CACHE_REDIS_URL)
 
 
 def ensure_index() -> None:

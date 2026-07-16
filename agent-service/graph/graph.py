@@ -6,12 +6,12 @@ state, what runs next?" Read top to bottom, it should read almost like
 the plain-English description from the original blueprint:
   Cache check -> Summarizer? -> Auditor -> Fact check -> Cache store?
 """
-from pathlib import Path
 from typing import Any
 
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.checkpoint.redis.aio import AsyncRedisSaver
 from langgraph.graph import StateGraph, END
 
+from .cache import CHECKPOINT_REDIS_URL
 from .nodes import (
     auditor_node,
     cache_check_node,
@@ -24,10 +24,9 @@ from .nodes import (
 from .state import AgentGraphState
 
 MAX_ITERATIONS = 3
-CHECKPOINT_DB_PATH = Path(__file__).resolve().parents[1] / "checkpoints.db"
 
 _checkpoint_context = None
-_checkpointer: AsyncSqliteSaver | None = None
+_checkpointer: AsyncRedisSaver | None = None
 compiled_graph: Any = None
 
 
@@ -111,9 +110,8 @@ async def initialize_checkpointer() -> None:
     if compiled_graph is not None:
         return
 
-    _checkpoint_context = AsyncSqliteSaver.from_conn_string(str(CHECKPOINT_DB_PATH))
+    _checkpoint_context = AsyncRedisSaver.from_conn_string(CHECKPOINT_REDIS_URL)
     _checkpointer = await _checkpoint_context.__aenter__()
-    await _checkpointer.setup()
     compiled_graph = _builder.compile(checkpointer=_checkpointer)
 
 
