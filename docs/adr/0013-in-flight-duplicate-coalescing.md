@@ -62,3 +62,23 @@ Because the broadcaster is process-local, a Gateway restart can leave SQL with
 a `Pending` or `Processing` row but no live channel. Returning `409 Conflict`
 in that case is intentional until the existing stale-job threshold allows the
 ADR-0007 resume behavior to take over.
+
+## Addendum: TOCTOU race found during testing
+
+Manual concurrency testing surfaced a pre-existing race, not introduced
+by this phase: two simultaneous requests for the same new jobId could
+both pass the `FindAsync` check before either INSERT completed, causing
+the losing request's SaveChangesAsync to throw an uncaught
+DbUpdateException (SQL error 2627, primary key violation) — the request
+crashed with an empty response instead of coalescing. This bug had
+existed since Phase 2 and was only exposed once Phase 13's testing
+specifically exercised true concurrent submissions of the same jobId.
+
+Fix: catch DbUpdateException around the new-job insert, detach the
+failed entity, re-fetch the row the winning request actually inserted,
+and route it through the same existing-job handling logic (terminal
+replay / broadcaster subscribe / stale resume) already used for a
+genuine duplicate. Verified via three concurrency scenarios — a 250ms
+gap, a true zero-delay race, and the original TOCTOU reproduction —
+all producing byte-identical SSE responses across both requests, with
+exactly one Python invocation and one persisted SQL row per jobId.
