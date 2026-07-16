@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using GatewayApi.Data;
 using GatewayApi.Models;
+using GatewayApi.Services;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -29,26 +30,124 @@ builder.Services.AddHttpClient("AgentService", client =>
     client.Timeout = TimeSpan.FromSeconds(30); // hard timeout — see docs/adr for failure-mode rules
 });
 
+builder.Services.AddSingleton<DocumentTextExtractor>();
+
 var app = builder.Build();
 app.UseCors();
 
-const int StaleJobThresholdSeconds = 30;
-
 // POST /api/jobs  { "jobId": "...", "text": "...", "fileName": "..." }
 // Streams Server-Sent Events straight through from the Python agent service.
-app.MapPost("/api/jobs", async (
+app.MapPost("/api/jobs", (
     HttpContext ctx,
     JobRequest req,
     IHttpClientFactory httpFactory,
-    AppDbContext db) =>
+    AppDbContext db,
+    ILogger<Program> logger) =>
+    ProcessJobAsync(ctx, req.JobId, req.Text, req.FileName, db, httpFactory, logger));
+
+app.MapPost("/api/jobs/upload", async (
+    HttpContext ctx,
+    DocumentTextExtractor textExtractor,
+    IHttpClientFactory httpFactory,
+    AppDbContext db,
+    ILogger<Program> logger) =>
 {
-    var jobId = req.JobId ?? Guid.NewGuid();
+    if (!ctx.Request.HasFormContentType)
+    {
+        return Results.BadRequest(new { message = "Upload requests must use multipart/form-data." });
+    }
+
+    IFormCollection form;
+    try
+    {
+        form = await ctx.Request.ReadFormAsync(ctx.RequestAborted);
+    }
+    catch (Exception exc)
+    {
+        logger.LogWarning(exc, "Unable to read job upload form data");
+        return Results.BadRequest(new { message = "The uploaded form data could not be read." });
+    }
+
+    var file = form.Files.GetFile("file");
+    if (file is null || file.Length == 0)
+    {
+        return Results.BadRequest(new { message = "A non-empty file field is required." });
+    }
+
+    const long maxUploadSizeBytes = 10 * 1024 * 1024;
+    if (file.Length > maxUploadSizeBytes)
+    {
+        return Results.BadRequest(new { message = "Uploaded files must be 10 MB or smaller." });
+    }
+
+    var extension = Path.GetExtension(file.FileName);
+    var documentType = extension.ToLowerInvariant() switch
+    {
+        ".txt" => DocumentType.Text,
+        ".pdf" => DocumentType.Pdf,
+        ".docx" => DocumentType.Docx,
+        _ => (DocumentType?)null
+    };
+
+    if (documentType is null)
+    {
+        return Results.BadRequest(new { message = "Only .txt, .pdf, and .docx files are supported." });
+    }
+
+    Guid? jobId = null;
+    var jobIdValue = form["jobId"].FirstOrDefault();
+    if (!string.IsNullOrWhiteSpace(jobIdValue))
+    {
+        if (!Guid.TryParse(jobIdValue, out var parsedJobId))
+        {
+            return Results.BadRequest(new { message = "jobId must be a valid UUID." });
+        }
+
+        jobId = parsedJobId;
+    }
+
+    string text;
+    try
+    {
+        await using var stream = file.OpenReadStream();
+        text = await textExtractor.ExtractAsync(stream, documentType.Value, ctx.RequestAborted);
+    }
+    catch (Exception exc)
+    {
+        logger.LogWarning(exc, "Unable to extract text from uploaded file {FileName}", file.FileName);
+        return Results.BadRequest(new { message = "The uploaded file could not be read as a valid document." });
+    }
+
+    return await ProcessJobAsync(ctx, jobId, text, file.FileName, db, httpFactory, logger);
+});
+
+app.MapGet("/api/jobs/{id:guid}", async (Guid id, AppDbContext db) =>
+{
+    var job = await db.JobProcessingLogs.FindAsync(id);
+    return job is null ? Results.NotFound() : Results.Ok(job);
+});
+
+app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+
+app.Run();
+
+static async Task<IResult> ProcessJobAsync(
+    HttpContext ctx,
+    Guid? requestedJobId,
+    string text,
+    string fileName,
+    AppDbContext db,
+    IHttpClientFactory httpFactory,
+    ILogger logger)
+{
+    const int staleJobThresholdSeconds = 30;
+    var jobId = requestedJobId ?? Guid.NewGuid();
     var now = DateTime.UtcNow;
     var existingJob = await db.JobProcessingLogs.FindAsync(jobId);
 
     if (existingJob is not null && IsTerminal(existingJob.Status))
     {
-        app.Logger.LogInformation(
+        logger.LogInformation(
             "Job {JobId} received, status={Status}",
             jobId,
             "duplicate-terminal");
@@ -63,9 +162,9 @@ app.MapPost("/api/jobs", async (
     }
 
     if (existingJob is not null
-        && existingJob.UpdatedAt > now.AddSeconds(-StaleJobThresholdSeconds))
+        && existingJob.UpdatedAt > now.AddSeconds(-staleJobThresholdSeconds))
     {
-        app.Logger.LogInformation(
+        logger.LogInformation(
             "Job {JobId} received, status={Status}",
             jobId,
             "duplicate-in-flight");
@@ -81,13 +180,13 @@ app.MapPost("/api/jobs", async (
     JobProcessingLog jobLog;
     if (existingJob is not null)
     {
-        app.Logger.LogInformation(
+        logger.LogInformation(
             "Job {JobId} received, status={Status}",
             jobId,
             "duplicate-stale-resume");
 
-        existingJob.FileName = req.FileName;
-        existingJob.RawText = req.Text;
+        existingJob.FileName = fileName;
+        existingJob.RawText = text;
         existingJob.Status = JobStatus.Processing;
         existingJob.UpdatedAt = now;
         await db.SaveChangesAsync();
@@ -96,7 +195,7 @@ app.MapPost("/api/jobs", async (
     }
     else
     {
-        app.Logger.LogInformation(
+        logger.LogInformation(
             "Job {JobId} received, status={Status}",
             jobId,
             "new");
@@ -104,9 +203,9 @@ app.MapPost("/api/jobs", async (
         jobLog = new JobProcessingLog
         {
             JobId = jobId,
-            FileName = req.FileName,
+            FileName = fileName,
             Status = JobStatus.Pending,
-            RawText = req.Text,
+            RawText = text,
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -123,8 +222,8 @@ app.MapPost("/api/jobs", async (
     var payload = JsonSerializer.Serialize(new
     {
         jobId = jobId.ToString(),
-        text = req.Text,
-        fileName = req.FileName
+        text,
+        fileName
     });
 
     using var content = new StringContent(payload, Encoding.UTF8, "application/json");
@@ -174,7 +273,7 @@ app.MapPost("/api/jobs", async (
     }
     catch (Exception exc)
     {
-        app.Logger.LogWarning(
+        logger.LogWarning(
             exc,
             "Job {JobId} stream relay threw; finalization will use any explicit terminal signal seen",
             jobId);
@@ -192,7 +291,7 @@ app.MapPost("/api/jobs", async (
     }
     else
     {
-        app.Logger.LogInformation(
+        logger.LogInformation(
             "Job {JobId} stream ended without terminal status; status remains Processing",
             jobId);
 
@@ -206,23 +305,13 @@ app.MapPost("/api/jobs", async (
 
     jobLog.UpdatedAt = DateTime.UtcNow;
     await db.SaveChangesAsync();
-    app.Logger.LogInformation(
+    logger.LogInformation(
         "Job {JobId} final status persisted, finalStatus={FinalStatus}",
         jobId,
         jobLog.Status);
 
     return Results.Empty;
-});
-
-app.MapGet("/api/jobs/{id:guid}", async (Guid id, AppDbContext db) =>
-{
-    var job = await db.JobProcessingLogs.FindAsync(id);
-    return job is null ? Results.NotFound() : Results.Ok(job);
-});
-
-app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
-
-app.Run();
+}
 
 static void TrackStreamChunk(
     string line,
