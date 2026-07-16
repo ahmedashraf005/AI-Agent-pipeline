@@ -612,8 +612,72 @@ input[type="file"].file-input::file-selector-button:hover {
   text-align: center;
 }
 
+.stats-donut-layout {
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.stats-donut {
+  display: block;
+  width: 128px;
+  height: 128px;
+}
+
+.stats-donut-ring,
+.stats-donut-segment {
+  fill: none;
+  stroke-width: 16px;
+}
+
+.stats-donut-ring {
+  stroke: #e2e8f0;
+}
+
+.stats-donut-segment {
+  transform: rotate(-90deg);
+  transform-origin: center;
+}
+
+.stats-donut-total {
+  fill: #0f172a;
+  font-size: 18px;
+  font-weight: 650;
+  dominant-baseline: central;
+}
+
+.stats-donut-legend {
+  display: grid;
+  gap: 8px;
+}
+
+.stats-donut-legend-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+}
+
+.stats-donut-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+}
+
 @media (max-width: 900px) {
   .stats-charts-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .stats-donut-layout {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
+  .stats-donut-legend {
+    width: 100%;
   }
 }

@@ -185,6 +185,25 @@ app.MapGet("/api/jobs/stats", async (AppDbContext db) =>
         .Select(group => new { Category = group.Key, Count = group.Count() })
         .ToDictionaryAsync(group => group.Category, group => group.Count);
 
+    var dailyCountByDate = await terminalJobs
+        .GroupBy(job => job.CreatedAt.Date)
+        .Select(group => new { Date = group.Key, Count = group.Count() })
+        .ToDictionaryAsync(group => group.Date, group => group.Count);
+
+    var dailyVolume = new List<DailyVolumeBucket>();
+    if (dailyCountByDate.Count > 0)
+    {
+        var earliestDate = dailyCountByDate.Keys.Min();
+        var latestDate = dailyCountByDate.Keys.Max();
+
+        for (var date = earliestDate; date <= latestDate; date = date.AddDays(1))
+        {
+            dailyVolume.Add(new DailyVolumeBucket(
+                date.ToString("yyyy-MM-dd"),
+                dailyCountByDate.GetValueOrDefault(date)));
+        }
+    }
+
     var outcomeBuckets = new[]
     {
         JobStatus.Completed,
@@ -222,7 +241,8 @@ app.MapGet("/api/jobs/stats", async (AppDbContext db) =>
         {
             category,
             count = categoryCounts.GetValueOrDefault(category)
-        })
+        }),
+        dailyVolume
     });
 });
 
@@ -614,3 +634,5 @@ record JobRequest(
     string? OutputLanguage);
 
 record StreamChunk(string Type, string Content, int? IterationCount, string? Category);
+
+record DailyVolumeBucket(string Date, int Count);
