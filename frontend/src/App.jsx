@@ -5,6 +5,7 @@ import JobForm from './components/JobForm.jsx'
 import MetricsRow from './components/MetricsRow.jsx'
 import PipelineStepper from './components/PipelineStepper.jsx'
 import RecentJobsPanel from './components/RecentJobsPanel.jsx'
+import StatsCharts from './components/StatsCharts.jsx'
 import './App.css'
 
 const FILE_NAME = 'manual-input.txt'
@@ -230,6 +231,8 @@ export default function App() {
             </div>
             <RecentJobsPanel jobs={jobs} />
           </div>
+
+          <StatsCharts />
         </main>
       </div>
     </div>
