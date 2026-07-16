@@ -665,6 +665,83 @@ input[type="file"].file-input::file-selector-button:hover {
   border-radius: 999px;
 }
 
+.stats-daily-volume-chart {
+  margin-bottom: 16px;
+}
+
+.stats-volume-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.stats-volume-gridline {
+  stroke: rgba(15, 23, 42, 0.06);
+  stroke-width: 1;
+}
+
+.stats-volume-axis {
+  stroke: #e2e8f0;
+  stroke-width: 1;
+}
+
+.stats-volume-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+}
+
+.stats-volume-point {
+  fill: var(--card-bg);
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+
+.stats-volume-x-label,
+.stats-volume-y-label {
+  fill: #64748b;
+  font-size: 11px;
+}
+
+.stats-volume-chart {
+  cursor: crosshair;
+}
+
+.stats-volume-guide {
+  stroke: rgba(15, 23, 42, 0.2);
+  stroke-dasharray: 3 3;
+  stroke-width: 1;
+}
+
+.stats-volume-hover-point {
+  fill: var(--card-bg);
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+.stats-volume-tooltip rect {
+  fill: var(--card-bg);
+  stroke: var(--card-border);
+  stroke-width: 1;
+}
+
+.stats-volume-tooltip-date,
+.stats-volume-tooltip-count {
+  font-size: 10px;
+}
+
+.stats-volume-tooltip-date {
+  fill: #64748b;
+}
+
+.stats-volume-tooltip-count {
+  fill: #0f172a;
+  font-weight: 650;
+}
+
 @media (max-width: 900px) {
   .stats-charts-grid {
     grid-template-columns: 1fr;
@@ -679,5 +756,10 @@ input[type="file"].file-input::file-selector-button:hover {
 
   .stats-donut-legend {
     width: 100%;
+  }
+
+  .stats-volume-x-label,
+  .stats-volume-y-label {
+    font-size: 10px;
   }
 }

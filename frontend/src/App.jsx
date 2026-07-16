@@ -210,6 +210,8 @@ export default function App() {
             avgLatency={metrics.avgLatency}
           />
 
+          <StatsCharts />
+
           <div className="dashboard-grid">
             <div className="main-column">
               <PipelineStepper status={status} />
@@ -231,8 +233,6 @@ export default function App() {
             </div>
             <RecentJobsPanel jobs={jobs} />
           </div>
-
-          <StatsCharts />
         </main>
       </div>
     </div>
