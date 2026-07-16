@@ -19,13 +19,14 @@ def _state() -> dict:
 
 @pytest.mark.asyncio
 async def test_auditor_node_parses_well_formed_valid_json(monkeypatch):
-    chat = AsyncMock(return_value={"message": {"content": '{"status": "VALID", "reason": "complete"}'}})
+    chat = AsyncMock(return_value={"message": {"content": '{"status": "VALID", "reason": "complete", "category": "legal"}'}})
     monkeypatch.setattr(nodes.client, "chat", chat)
 
     result = await nodes.auditor_node(_state())
 
     assert result["audit_verdict"]["status"] == "VALID"
     assert result["iteration_count"] == 1
+    assert result["category"] == "legal"
 
 
 @pytest.mark.asyncio
@@ -37,11 +38,12 @@ async def test_auditor_node_falls_back_to_invalid_on_malformed_json(monkeypatch)
 
     assert result["audit_verdict"]["status"] == "INVALID"
     assert result["audit_verdict"]["reason"] == "Auditor returned malformed output."
+    assert result["category"] == "general"
 
 
 @pytest.mark.asyncio
 async def test_auditor_node_uses_json_format_and_deterministic_temperature(monkeypatch):
-    chat = AsyncMock(return_value={"message": {"content": '{"status": "VALID", "reason": "complete"}'}})
+    chat = AsyncMock(return_value={"message": {"content": '{"status": "VALID", "reason": "complete", "category": "general"}'}})
     monkeypatch.setattr(nodes.client, "chat", chat)
 
     await nodes.auditor_node(_state())

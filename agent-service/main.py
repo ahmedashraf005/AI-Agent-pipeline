@@ -64,11 +64,14 @@ def sse_event(
     event_type: str,
     content: str,
     iteration_count: int | None = None,
+    category: str | None = None,
 ) -> str:
     """Matches docs/contracts/stream-chunk.schema.json exactly."""
     payload = {"jobId": job_id, "type": event_type, "content": content}
     if iteration_count is not None:
         payload["iterationCount"] = iteration_count
+    if category is not None:
+        payload["category"] = category
 
     return f"data: {json.dumps(payload)}\n\n"
 
@@ -127,6 +130,7 @@ async def stream_summary(job: JobSubmission):
                 "output_language": job.output_language.lower(),
                 "translation_verified": None,
                 "format_verified": None,
+                "category": None,
             }
 
             graph_input: AgentGraphState | None
@@ -168,6 +172,7 @@ async def stream_summary(job: JobSubmission):
                                 job.jobId, "status",
                                 f"Audit result: {verdict['status']} — {verdict['reason']}",
                                 state["iteration_count"],
+                                state["category"],
                             )
 
                         elif node_name == "fact_checker":

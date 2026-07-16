@@ -57,3 +57,29 @@ def test_fact_checker_passes_when_document_has_no_required_literal_facts():
     result = fact_checker_node(state)
 
     assert result["fact_check_result"] == {"status": "PASS", "missing_facts": []}
+
+
+def test_fact_checker_requires_percentages_for_financial_documents():
+    state = _state(
+        "The investment returned 7.5% on March 3, 2027 and is worth $91,750.",
+        "The investment returned on March 3, 2027 and is worth $91,750.",
+    )
+    state["category"] = "financial"
+
+    result = fact_checker_node(state)
+
+    assert result["fact_check_result"]["status"] == "FAIL"
+    assert "7.5%" in result["fact_check_result"]["missing_facts"]
+
+
+def test_fact_checker_requires_article_section_and_clause_references_for_legal_documents():
+    state = _state(
+        "Article 4.2 applies before March 3, 2027, subject to Clause 7.",
+        "The terms apply before March 3, 2027.",
+    )
+    state["category"] = "legal"
+
+    result = fact_checker_node(state)
+
+    assert result["fact_check_result"]["status"] == "FAIL"
+    assert result["fact_check_result"]["missing_facts"] == ["Article 4.2", "Clause 7"]

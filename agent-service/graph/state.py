@@ -28,3 +28,4 @@ class AgentGraphState(TypedDict):
     output_language: str
     translation_verified: Optional[bool]
     format_verified: Optional[bool]
+    category: Optional[Literal["financial", "legal", "medical", "general"]]

@@ -313,6 +313,7 @@ static async Task<IResult> ProcessJobAsync(
     string? lastToken = null;
     string? explicitErrorMessage = null;
     int? lastIterationCount = null;
+    string? lastCategory = null;
 
     try
     {
@@ -337,11 +338,17 @@ static async Task<IResult> ProcessJobAsync(
                 ref explicitTerminalStatus,
                 ref lastToken,
                 ref explicitErrorMessage,
-                ref lastIterationCount);
+                ref lastIterationCount,
+                ref lastCategory);
 
             if (lastIterationCount is not null)
             {
                 jobLog.LoopIterations = lastIterationCount.Value;
+            }
+
+            if (lastCategory is not null)
+            {
+                jobLog.Category = lastCategory;
             }
 
             if (registeredInBroadcaster)
@@ -388,6 +395,11 @@ static async Task<IResult> ProcessJobAsync(
     if (lastIterationCount is not null)
     {
         jobLog.LoopIterations = lastIterationCount.Value;
+    }
+
+    if (lastCategory is not null)
+    {
+        jobLog.Category = lastCategory;
     }
 
     jobLog.UpdatedAt = DateTime.UtcNow;
@@ -450,7 +462,8 @@ static void TrackStreamChunk(
     ref JobStatus? explicitTerminalStatus,
     ref string? lastToken,
     ref string? explicitErrorMessage,
-    ref int? lastIterationCount)
+    ref int? lastIterationCount,
+    ref string? lastCategory)
 {
     const string dataPrefix = "data: ";
     if (!line.StartsWith(dataPrefix, StringComparison.Ordinal))
@@ -488,6 +501,11 @@ static void TrackStreamChunk(
         {
             lastIterationCount = chunk.IterationCount;
         }
+
+        if (chunk?.Category is not null)
+        {
+            lastCategory = chunk.Category;
+        }
     }
     catch (JsonException)
     {
@@ -522,4 +540,4 @@ record JobRequest(
     string? OutputFormat,
     string? OutputLanguage);
 
-record StreamChunk(string Type, string Content, int? IterationCount);
+record StreamChunk(string Type, string Content, int? IterationCount, string? Category);
