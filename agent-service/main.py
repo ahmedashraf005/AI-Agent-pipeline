@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+from typing import Literal
 
 
 from dotenv import load_dotenv
@@ -42,6 +43,8 @@ class JobSubmission(BaseModel):
     jobId: str
     text: str
     fileName: str
+    output_format: Literal["paragraph", "bullets"] = "paragraph"
+    output_language: str = "en"
 
 
 def sse_event(
@@ -70,6 +73,10 @@ async def stream_summary(job: JobSubmission):
         "audit_verdict": None,
         "fact_check_result": None,
         "iteration_count": 0,
+        "output_format": job.output_format,
+        "output_language": job.output_language.lower(),
+        "translation_verified": None,
+        "format_verified": None,
     }
 
     graph_input: AgentGraphState | None
@@ -131,6 +138,26 @@ async def stream_summary(job: JobSubmission):
                     elif node_name == "cache_store":
                         logger.info("Job %s completed cache_store node", job.jobId)
                         yield sse_event(job.jobId, "status", "Cached result for future reuse")
+
+                    elif node_name == "format_node" and state["output_format"] == "bullets":
+                        logger.info("Job %s completed format_node", job.jobId)
+                        yield sse_event(job.jobId, "status", "Reformatting summary")
+                        if state["format_verified"]:
+                            yield sse_event(job.jobId, "status", "Reformat verified")
+                        else:
+                            yield sse_event(job.jobId, "status", "Reformat check failed, kept original")
+
+                    elif node_name == "translate_node" and state["output_language"] != "en":
+                        logger.info("Job %s completed translate_node", job.jobId)
+                        yield sse_event(job.jobId, "status", "Translating summary")
+                        if state["translation_verified"]:
+                            yield sse_event(job.jobId, "status", "Translation verified")
+                        else:
+                            yield sse_event(
+                                job.jobId,
+                                "status",
+                                "Translation verified: could not confirm all figures",
+                            )
 
             verdict = state["audit_verdict"]
             fact_check = state["fact_check_result"]

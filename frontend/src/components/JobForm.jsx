@@ -1,5 +1,10 @@
 import { useRef, useState } from 'react'
 
+const LANGUAGES = [
+  { code: 'en', label: 'English' },
+  { code: 'ar', label: 'Arabic' },
+]
+
 export default function JobForm({
   text,
   output,
@@ -7,8 +12,12 @@ export default function JobForm({
   jobId,
   isSubmitting,
   file,
+  outputFormat,
+  outputLanguage,
   onTextChange,
   onFileChange,
+  onOutputFormatChange,
+  onOutputLanguageChange,
   onSubmit,
 }) {
   const [fileError, setFileError] = useState('')
@@ -76,6 +85,45 @@ export default function JobForm({
       />
       {file && <div>Selected file: {file.name}</div>}
       {fileError && <div role="alert">{fileError}</div>}
+
+      <fieldset>
+        <legend className="field-label">Summary format</legend>
+        <label>
+          <input
+            type="radio"
+            name="output-format"
+            value="paragraph"
+            checked={outputFormat === 'paragraph'}
+            onChange={(event) => onOutputFormatChange(event.target.value)}
+          />
+          Paragraph
+        </label>
+        <label>
+          <input
+            type="radio"
+            name="output-format"
+            value="bullets"
+            checked={outputFormat === 'bullets'}
+            onChange={(event) => onOutputFormatChange(event.target.value)}
+          />
+          Bullet points
+        </label>
+      </fieldset>
+
+      <label className="field-label" htmlFor="output-language">
+        Summary language
+      </label>
+      <select
+        id="output-language"
+        value={outputLanguage}
+        onChange={(event) => onOutputLanguageChange(event.target.value)}
+      >
+        {LANGUAGES.map((language) => (
+          <option key={language.code} value={language.code}>
+            {language.label}
+          </option>
+        ))}
+      </select>
 
       <div className="form-actions">
         <button className="primary-button" onClick={onSubmit} disabled={isSubmitting || !hasExactlyOneInput}>

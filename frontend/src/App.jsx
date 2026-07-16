@@ -45,6 +45,8 @@ export default function App() {
   const [jobs, setJobs] = useState([])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [selectedFile, setSelectedFile] = useState(null)
+  const [outputFormat, setOutputFormat] = useState('paragraph')
+  const [outputLanguage, setOutputLanguage] = useState('en')
 
   const metrics = calculateMetrics(jobs)
 
@@ -94,6 +96,8 @@ export default function App() {
         const formData = new FormData()
         formData.append('jobId', nextJobId)
         formData.append('file', selectedFile)
+        formData.append('outputFormat', outputFormat)
+        formData.append('outputLanguage', outputLanguage)
 
         res = await fetch('http://localhost:5001/api/jobs/upload', {
           method: 'POST',
@@ -103,7 +107,13 @@ export default function App() {
         res = await fetch('http://localhost:5001/api/jobs', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jobId: nextJobId, text, fileName: FILE_NAME }),
+          body: JSON.stringify({
+            jobId: nextJobId,
+            text,
+            fileName: FILE_NAME,
+            outputFormat,
+            outputLanguage,
+          }),
         })
       }
 
@@ -209,8 +219,12 @@ export default function App() {
                 jobId={jobId}
                 isSubmitting={isSubmitting}
                 file={selectedFile}
+                outputFormat={outputFormat}
+                outputLanguage={outputLanguage}
                 onTextChange={handleTextChange}
                 onFileChange={handleFileChange}
+                onOutputFormatChange={setOutputFormat}
+                onOutputLanguageChange={setOutputLanguage}
                 onSubmit={submit}
               />
             </div>

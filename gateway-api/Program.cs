@@ -43,7 +43,16 @@ app.MapPost("/api/jobs", (
     IHttpClientFactory httpFactory,
     AppDbContext db,
     ILogger<Program> logger) =>
-    ProcessJobAsync(ctx, req.JobId, req.Text, req.FileName, db, httpFactory, logger));
+    ProcessJobAsync(
+        ctx,
+        req.JobId,
+        req.Text,
+        req.FileName,
+        req.OutputFormat,
+        req.OutputLanguage,
+        db,
+        httpFactory,
+        logger));
 
 app.MapPost("/api/jobs/upload", async (
     HttpContext ctx,
@@ -106,6 +115,9 @@ app.MapPost("/api/jobs/upload", async (
         jobId = parsedJobId;
     }
 
+    var outputFormat = form["outputFormat"].FirstOrDefault();
+    var outputLanguage = form["outputLanguage"].FirstOrDefault();
+
     string text;
     try
     {
@@ -118,7 +130,16 @@ app.MapPost("/api/jobs/upload", async (
         return Results.BadRequest(new { message = "The uploaded file could not be read as a valid document." });
     }
 
-    return await ProcessJobAsync(ctx, jobId, text, file.FileName, db, httpFactory, logger);
+    return await ProcessJobAsync(
+        ctx,
+        jobId,
+        text,
+        file.FileName,
+        outputFormat,
+        outputLanguage,
+        db,
+        httpFactory,
+        logger);
 });
 
 app.MapGet("/api/jobs/{id:guid}", async (Guid id, AppDbContext db) =>
@@ -136,6 +157,8 @@ static async Task<IResult> ProcessJobAsync(
     Guid? requestedJobId,
     string text,
     string fileName,
+    string? outputFormat,
+    string? outputLanguage,
     AppDbContext db,
     IHttpClientFactory httpFactory,
     ILogger logger)
@@ -223,7 +246,9 @@ static async Task<IResult> ProcessJobAsync(
     {
         jobId = jobId.ToString(),
         text,
-        fileName
+        fileName,
+        output_format = outputFormat ?? "paragraph",
+        output_language = outputLanguage ?? "en"
     });
 
     using var content = new StringContent(payload, Encoding.UTF8, "application/json");
@@ -383,6 +408,11 @@ static async Task WriteSseEvent(
     await ctx.Response.Body.FlushAsync();
 }
 
-record JobRequest(string Text, string FileName, Guid? JobId);
+record JobRequest(
+    string Text,
+    string FileName,
+    Guid? JobId,
+    string? OutputFormat,
+    string? OutputLanguage);
 
 record StreamChunk(string Type, string Content, int? IterationCount);

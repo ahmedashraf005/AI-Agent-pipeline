@@ -17,7 +17,9 @@ from .nodes import (
     cache_check_node,
     cache_store_node,
     fact_checker_node,
+    format_node,
     summarizer_node,
+    translate_node,
 )
 from .state import AgentGraphState
 
@@ -65,6 +67,8 @@ _builder.add_node("summarizer", summarizer_node)
 _builder.add_node("auditor", auditor_node)
 _builder.add_node("fact_checker", fact_checker_node)
 _builder.add_node("cache_store", cache_store_node)
+_builder.add_node("format_node", format_node)
+_builder.add_node("translate_node", translate_node)
 
 _builder.set_entry_point("cache_check")
 _builder.add_conditional_edges(
@@ -96,7 +100,9 @@ _builder.add_conditional_edges(
     },
 )
 
-_builder.add_edge("cache_store", END)
+_builder.add_edge("cache_store", "format_node")
+_builder.add_edge("format_node", "translate_node")
+_builder.add_edge("translate_node", END)
 
 
 async def initialize_checkpointer() -> None:

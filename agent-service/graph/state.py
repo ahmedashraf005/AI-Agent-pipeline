@@ -24,3 +24,7 @@ class AgentGraphState(TypedDict):
     audit_verdict: Optional[AuditVerdict]
     fact_check_result: Optional[FactCheckResult]
     iteration_count: int
+    output_format: Literal["paragraph", "bullets"]
+    output_language: str
+    translation_verified: Optional[bool]
+    format_verified: Optional[bool]
