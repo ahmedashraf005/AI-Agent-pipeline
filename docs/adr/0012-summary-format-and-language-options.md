@@ -53,3 +53,16 @@ Bullet summaries retain the original deterministic fact gate after their
 presentation transformation. Translations clearly carry a weaker,
 numeric-only signal and still complete even if the signal is false; consumers
 must not treat it as a full multilingual fact-check result.
+
+## Addendum: empirical evidence of the documented limitation
+
+Manual testing surfaced a concrete instance of the risk described above:
+a paragraph/Arabic job returned generally correct, numerically-accurate
+output (both the date and the dollar figure survived intact), but with a
+single stray CJK character injected mid-word, breaking otherwise fluent
+Arabic text. The numeric-only verification check correctly passed this
+job, since all figures were present — confirming this is exactly the
+class of defect the check was never designed to catch: it validates
+numbers, not token-level language fidelity. Given Arabic's unsupported
+status in Llama 3.1's model card, this is accepted as expected behavior
+for this phase, not treated as a bug to fix.
