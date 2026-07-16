@@ -153,6 +153,79 @@ app.MapGet("/api/jobs/{id:guid}", async (Guid id, AppDbContext db) =>
     return job is null ? Results.NotFound() : Results.Ok(job);
 });
 
+app.MapGet("/api/jobs/stats", async (AppDbContext db) =>
+{
+    var terminalStatuses = new[]
+    {
+        JobStatus.Completed,
+        JobStatus.AwaitingReview,
+        JobStatus.Failed
+    };
+    var terminalJobs = db.JobProcessingLogs
+        .AsNoTracking()
+        .Where(job => terminalStatuses.Contains(job.Status));
+
+    var outcomeCounts = await terminalJobs
+        .GroupBy(job => job.Status)
+        .Select(group => new { Status = group.Key, Count = group.Count() })
+        .ToDictionaryAsync(group => group.Status, group => group.Count);
+
+    var iterationCounts = await terminalJobs
+        .GroupBy(job => job.LoopIterations)
+        .Select(group => new { Iterations = group.Key, Count = group.Count() })
+        .ToDictionaryAsync(group => group.Iterations, group => group.Count);
+
+    var iterationBuckets = new[] { 1, 2, 3 };
+    var otherIterationCount = iterationCounts
+        .Where(pair => !iterationBuckets.Contains(pair.Key))
+        .Sum(pair => pair.Value);
+
+    var categoryCounts = await terminalJobs
+        .GroupBy(job => job.Category ?? "uncategorized")
+        .Select(group => new { Category = group.Key, Count = group.Count() })
+        .ToDictionaryAsync(group => group.Category, group => group.Count);
+
+    var outcomeBuckets = new[]
+    {
+        JobStatus.Completed,
+        JobStatus.AwaitingReview,
+        JobStatus.Failed
+    };
+    var categoryBuckets = new[]
+    {
+        "financial",
+        "legal",
+        "medical",
+        "general",
+        "uncategorized"
+    };
+
+    return Results.Ok(new
+    {
+        outcomeBreakdown = outcomeBuckets.Select(status => new
+        {
+            status = status.ToString(),
+            count = outcomeCounts.GetValueOrDefault(status)
+        }),
+        iterationBreakdown = iterationBuckets
+            .Select(iterations => new
+            {
+                iterations = (object)iterations,
+                count = iterationCounts.GetValueOrDefault(iterations)
+            })
+            .Append(new
+            {
+                iterations = (object)"other",
+                count = otherIterationCount
+            }),
+        categoryBreakdown = categoryBuckets.Select(category => new
+        {
+            category,
+            count = categoryCounts.GetValueOrDefault(category)
+        })
+    });
+});
+
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
 app.Run();
