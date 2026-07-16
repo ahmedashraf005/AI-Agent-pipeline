@@ -1,7 +1,11 @@
+import { useCountUp } from '../hooks/useCountUp.js'
+
 export default function MetricsRow({ jobsToday, cacheHitRate, avgLatency }) {
+  const displayedJobsToday = Math.round(useCountUp(jobsToday))
+  const displayedCacheHitRate = Math.round(useCountUp(cacheHitRate))
   const metrics = [
-    { label: 'Jobs today', value: jobsToday },
-    { label: 'Cache hit rate', value: `${cacheHitRate}%` },
+    { label: 'Jobs today', value: displayedJobsToday },
+    { label: 'Cache hit rate', value: `${displayedCacheHitRate}%` },
     { label: 'Avg latency', value: avgLatency === null ? '—' : `${avgLatency.toFixed(1)}s` },
   ]
 

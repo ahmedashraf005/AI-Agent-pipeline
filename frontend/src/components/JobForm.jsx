@@ -1,10 +1,5 @@
 import { useRef, useState } from 'react'
 
-const LANGUAGES = [
-  { code: 'en', label: 'English' },
-  { code: 'ar', label: 'Arabic' },
-]
-
 export default function JobForm({
   text,
   output,
@@ -76,19 +71,26 @@ export default function JobForm({
       <label className="field-label" htmlFor="document-file">
         Or upload a document
       </label>
-      <input
-        ref={fileInputRef}
-        id="document-file"
-        type="file"
-        accept=".txt,.pdf,.docx"
-        onChange={handleFileChange}
-      />
-      {file && <div>Selected file: {file.name}</div>}
-      {fileError && <div role="alert">{fileError}</div>}
+      <div className="file-upload-block">
+        <input
+          ref={fileInputRef}
+          id="document-file"
+          type="file"
+          accept=".txt,.pdf,.docx"
+          className="file-input"
+          onChange={handleFileChange}
+        />
+        {file && <div className="file-selected">Selected file: {file.name}</div>}
+        {fileError && (
+          <div className="file-error" role="alert">
+            {fileError}
+          </div>
+        )}
+      </div>
 
-      <fieldset>
+      <fieldset className="format-fieldset">
         <legend className="field-label">Summary format</legend>
-        <label>
+        <label className="format-option">
           <input
             type="radio"
             name="output-format"
@@ -98,7 +100,7 @@ export default function JobForm({
           />
           Paragraph
         </label>
-        <label>
+        <label className="format-option">
           <input
             type="radio"
             name="output-format"
@@ -110,20 +112,30 @@ export default function JobForm({
         </label>
       </fieldset>
 
-      <label className="field-label" htmlFor="output-language">
-        Summary language
-      </label>
-      <select
-        id="output-language"
-        value={outputLanguage}
-        onChange={(event) => onOutputLanguageChange(event.target.value)}
-      >
-        {LANGUAGES.map((language) => (
-          <option key={language.code} value={language.code}>
-            {language.label}
-          </option>
-        ))}
-      </select>
+      <div className="language-block">
+        <label className="field-label" id="language-toggle-label">
+          Summary language
+        </label>
+        <div className="language-toggle" role="group" aria-labelledby="language-toggle-label">
+          <button
+            type="button"
+            className={`language-toggle-option ${outputLanguage === 'en' ? 'is-active' : ''}`}
+            aria-pressed={outputLanguage === 'en'}
+            onClick={() => onOutputLanguageChange('en')}
+          >
+            English
+          </button>
+          <button
+            type="button"
+            className={`language-toggle-option ${outputLanguage === 'ar' ? 'is-active' : ''}`}
+            aria-pressed={outputLanguage === 'ar'}
+            onClick={() => onOutputLanguageChange('ar')}
+          >
+            Arabic
+          </button>
+          <span className="language-toggle-thumb" aria-hidden="true" data-position={outputLanguage} />
+        </div>
+      </div>
 
       <div className="form-actions">
         <button className="primary-button" onClick={onSubmit} disabled={isSubmitting || !hasExactlyOneInput}>

@@ -31,6 +31,7 @@ builder.Services.AddHttpClient("AgentService", client =>
 });
 
 builder.Services.AddSingleton<DocumentTextExtractor>();
+builder.Services.AddSingleton<InFlightJobBroadcaster>();
 
 var app = builder.Build();
 app.UseCors();
@@ -42,6 +43,7 @@ app.MapPost("/api/jobs", (
     JobRequest req,
     IHttpClientFactory httpFactory,
     AppDbContext db,
+    InFlightJobBroadcaster broadcaster,
     ILogger<Program> logger) =>
     ProcessJobAsync(
         ctx,
@@ -52,6 +54,7 @@ app.MapPost("/api/jobs", (
         req.OutputLanguage,
         db,
         httpFactory,
+        broadcaster,
         logger));
 
 app.MapPost("/api/jobs/upload", async (
@@ -59,6 +62,7 @@ app.MapPost("/api/jobs/upload", async (
     DocumentTextExtractor textExtractor,
     IHttpClientFactory httpFactory,
     AppDbContext db,
+    InFlightJobBroadcaster broadcaster,
     ILogger<Program> logger) =>
 {
     if (!ctx.Request.HasFormContentType)
@@ -139,6 +143,7 @@ app.MapPost("/api/jobs/upload", async (
         outputLanguage,
         db,
         httpFactory,
+        broadcaster,
         logger);
 });
 
@@ -161,6 +166,7 @@ static async Task<IResult> ProcessJobAsync(
     string? outputLanguage,
     AppDbContext db,
     IHttpClientFactory httpFactory,
+    InFlightJobBroadcaster broadcaster,
     ILogger logger)
 {
     const int staleJobThresholdSeconds = 30;
@@ -168,53 +174,72 @@ static async Task<IResult> ProcessJobAsync(
     var now = DateTime.UtcNow;
     var existingJob = await db.JobProcessingLogs.FindAsync(jobId);
 
-    if (existingJob is not null && IsTerminal(existingJob.Status))
+    async Task<(IResult? Result, JobProcessingLog? JobLog)> HandleExistingJobAsync(
+        JobProcessingLog job)
     {
-        logger.LogInformation(
-            "Job {JobId} received, status={Status}",
-            jobId,
-            "duplicate-terminal");
+        var checkedAt = DateTime.UtcNow;
 
-        ctx.Response.Headers["Content-Type"] = "text/event-stream";
-        ctx.Response.Headers["Cache-Control"] = "no-cache";
-
-        await WriteSseEvent(ctx, jobId, "status", existingJob.Status.ToString());
-        await WriteSseEvent(ctx, jobId, "token", existingJob.FinalSummary ?? "");
-
-        return Results.Empty;
-    }
-
-    if (existingJob is not null
-        && existingJob.UpdatedAt > now.AddSeconds(-staleJobThresholdSeconds))
-    {
-        logger.LogInformation(
-            "Job {JobId} received, status={Status}",
-            jobId,
-            "duplicate-in-flight");
-
-        return Results.Conflict(new
+        if (IsTerminal(job.Status))
         {
-            jobId,
-            status = existingJob.Status.ToString(),
-            message = "Job is already in progress."
-        });
-    }
+            logger.LogInformation(
+                "Job {JobId} received, status={Status}",
+                jobId,
+                "duplicate-terminal");
 
-    JobProcessingLog jobLog;
-    if (existingJob is not null)
-    {
+            ctx.Response.Headers["Content-Type"] = "text/event-stream";
+            ctx.Response.Headers["Cache-Control"] = "no-cache";
+
+            await WriteSseEvent(ctx, jobId, "status", job.Status.ToString());
+            await WriteSseEvent(ctx, jobId, "token", job.FinalSummary ?? "");
+
+            return (Results.Empty, null);
+        }
+
+        if (job.UpdatedAt > checkedAt.AddSeconds(-staleJobThresholdSeconds))
+        {
+            logger.LogInformation(
+                "Job {JobId} received, status={Status}",
+                jobId,
+                "duplicate-in-flight");
+
+            if (broadcaster.TrySubscribe(jobId, out var subscription))
+            {
+                return (await StreamCoalescedJobAsync(ctx, jobId, subscription!, logger), null);
+            }
+
+            return (Results.Conflict(new
+            {
+                jobId,
+                status = job.Status.ToString(),
+                message = "Job is already in progress, but no live stream is available on this Gateway instance."
+            }), null);
+        }
+
         logger.LogInformation(
             "Job {JobId} received, status={Status}",
             jobId,
             "duplicate-stale-resume");
 
-        existingJob.FileName = fileName;
-        existingJob.RawText = text;
-        existingJob.Status = JobStatus.Processing;
-        existingJob.UpdatedAt = now;
+        job.FileName = fileName;
+        job.RawText = text;
+        job.Status = JobStatus.Processing;
+        job.UpdatedAt = checkedAt;
         await db.SaveChangesAsync();
 
-        jobLog = existingJob;
+        return (null, job);
+    }
+
+    JobProcessingLog jobLog;
+    var registeredInBroadcaster = false;
+    if (existingJob is not null)
+    {
+        var decision = await HandleExistingJobAsync(existingJob);
+        if (decision.Result is not null)
+        {
+            return decision.Result;
+        }
+
+        jobLog = decision.JobLog!;
     }
     else
     {
@@ -234,7 +259,34 @@ static async Task<IResult> ProcessJobAsync(
         };
 
         db.JobProcessingLogs.Add(jobLog);
-        await db.SaveChangesAsync();
+        try
+        {
+            await db.SaveChangesAsync();
+            registeredInBroadcaster = broadcaster.TryRegister(jobId);
+        }
+        catch (DbUpdateException exc)
+        {
+            logger.LogInformation(
+                exc,
+                "Job {JobId} insert lost race to a concurrent request; reloading winner row",
+                jobId);
+
+            db.Entry(jobLog).State = EntityState.Detached;
+
+            var winningJob = await db.JobProcessingLogs.FindAsync(jobId);
+            if (winningJob is null)
+            {
+                throw;
+            }
+
+            var decision = await HandleExistingJobAsync(winningJob);
+            if (decision.Result is not null)
+            {
+                return decision.Result;
+            }
+
+            jobLog = decision.JobLog!;
+        }
     }
 
     ctx.Response.Headers["Content-Type"] = "text/event-stream";
@@ -292,6 +344,11 @@ static async Task<IResult> ProcessJobAsync(
                 jobLog.LoopIterations = lastIterationCount.Value;
             }
 
+            if (registeredInBroadcaster)
+            {
+                broadcaster.Publish(jobId, line);
+            }
+
             await ctx.Response.WriteAsync(line + "\n");
             await ctx.Response.Body.FlushAsync();
         }
@@ -320,6 +377,11 @@ static async Task<IResult> ProcessJobAsync(
             "Job {JobId} stream ended without terminal status; status remains Processing",
             jobId);
 
+        if (registeredInBroadcaster)
+        {
+            broadcaster.Complete(jobId);
+        }
+
         return Results.Empty;
     }
 
@@ -334,6 +396,51 @@ static async Task<IResult> ProcessJobAsync(
         "Job {JobId} final status persisted, finalStatus={FinalStatus}",
         jobId,
         jobLog.Status);
+
+    if (registeredInBroadcaster)
+    {
+        broadcaster.Complete(jobId);
+    }
+
+    return Results.Empty;
+}
+
+static async Task<IResult> StreamCoalescedJobAsync(
+    HttpContext ctx,
+    Guid jobId,
+    JobSubscription subscription,
+    ILogger logger)
+{
+    using (subscription)
+    {
+        logger.LogInformation(
+            "Job {JobId} duplicate attached to live in-flight SSE stream",
+            jobId);
+
+        ctx.Response.Headers["Content-Type"] = "text/event-stream";
+        ctx.Response.Headers["Cache-Control"] = "no-cache";
+
+        try
+        {
+            foreach (var line in subscription.BufferedLines)
+            {
+                await ctx.Response.WriteAsync(line + "\n", ctx.RequestAborted);
+                await ctx.Response.Body.FlushAsync(ctx.RequestAborted);
+            }
+
+            await foreach (var line in subscription.Reader.ReadAllAsync(ctx.RequestAborted))
+            {
+                await ctx.Response.WriteAsync(line + "\n", ctx.RequestAborted);
+                await ctx.Response.Body.FlushAsync(ctx.RequestAborted);
+            }
+        }
+        catch (OperationCanceledException) when (ctx.RequestAborted.IsCancellationRequested)
+        {
+            logger.LogInformation(
+                "Job {JobId} coalesced duplicate SSE stream disconnected",
+                jobId);
+        }
+    }
 
     return Results.Empty;
 }
