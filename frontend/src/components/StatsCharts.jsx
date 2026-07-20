@@ -1,5 +1,7 @@
 import { useEffect, useId, useState } from 'react'
 
+import { gatewayUrl } from '../api.js'
+
 import { useCountUp } from '../hooks/useCountUp.js'
 
 const OUTCOME_LABELS = {
@@ -344,7 +346,7 @@ export default function StatsCharts() {
   useEffect(() => {
     let isCurrent = true
 
-    fetch('http://localhost:5001/api/jobs/stats')
+    fetch(gatewayUrl('/api/jobs/stats'))
       .then((response) => {
         if (!response.ok) {
           throw new Error(`Stats request failed with ${response.status}`)

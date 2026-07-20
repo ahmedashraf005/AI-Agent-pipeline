@@ -6,6 +6,7 @@ import MetricsRow from './components/MetricsRow.jsx'
 import PipelineStepper from './components/PipelineStepper.jsx'
 import RecentJobsPanel from './components/RecentJobsPanel.jsx'
 import StatsCharts from './components/StatsCharts.jsx'
+import { gatewayUrl, requestErrorMessage, responseErrorMessage } from './api.js'
 import './App.css'
 
 const FILE_NAME = 'manual-input.txt'
@@ -100,12 +101,12 @@ export default function App() {
         formData.append('outputFormat', outputFormat)
         formData.append('outputLanguage', outputLanguage)
 
-        res = await fetch('http://localhost:5001/api/jobs/upload', {
+        res = await fetch(gatewayUrl('/api/jobs/upload'), {
           method: 'POST',
           body: formData,
         })
       } else {
-        res = await fetch('http://localhost:5001/api/jobs', {
+        res = await fetch(gatewayUrl('/api/jobs'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -119,8 +120,7 @@ export default function App() {
       }
 
       if (!res.ok) {
-        const error = await res.json()
-        const errorStatus = `Error: ${error.message ?? res.statusText}`
+        const errorStatus = `Error: ${await responseErrorMessage(res)}`
         setStatus(errorStatus)
         updateJob(nextJobId, () => ({
           status: errorStatus,
@@ -167,7 +167,7 @@ export default function App() {
         }
       }
     } catch (error) {
-      const errorStatus = `error: ${error.message}`
+      const errorStatus = `error: ${requestErrorMessage(error)}`
       setStatus(errorStatus)
       updateJob(nextJobId, () => ({
         status: errorStatus,
