@@ -118,19 +118,35 @@ async def translate_node(state: AgentGraphState) -> dict:
     )
     translated_summary = response["message"]["content"]
 
-    # This is intentionally weaker than the English fact checker: it only
-    # checks the digit-only forms of facts already extracted by that checker.
-    numeric_values = [
-        digits
+    # This is intentionally weaker than the English fact checker: it checks
+    # each numeric component of facts already extracted by that checker. A
+    # date's day and year are separate components, while punctuation inside a
+    # numeric value such as 14,300 is tolerated in the translated text.
+    numeric_components = [
+        component
         for fact in _extract_required_facts(state["original_text"])
-        if (digits := re.sub(r"\D", "", fact))
+        for component in re.findall(r"\d+(?:[,.]\d+)*", fact)
     ]
-    translation_verified = all(value in translated_summary for value in numeric_values)
+    translation_verified = all(
+        _translation_contains_numeric_component(translated_summary, component)
+        for component in numeric_components
+    )
 
     return {
         "draft_summary": translated_summary,
         "translation_verified": translation_verified,
     }
+
+
+def _translation_contains_numeric_component(translated_text: str, component: str) -> bool:
+    """Match a number while allowing common digit-grouping punctuation."""
+    digits = re.sub(r"\D", "", component)
+    if not digits:
+        return True
+
+    separator = r"[\s,._'’\u066b\u066c]*"
+    pattern = rf"(?<!\d){separator.join(re.escape(digit) for digit in digits)}(?!\d)"
+    return re.search(pattern, translated_text) is not None
 
 
 def _extract_required_facts(text: str) -> list[str]:
