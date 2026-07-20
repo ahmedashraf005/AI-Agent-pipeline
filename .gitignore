@@ -9,6 +9,7 @@ agent-service/*.pyc
 agent-service/.env
 agent-service/checkpoints.db
 agent-service/checkpoints.db-*
+agent-service/eval/reports/
 
 # Node
 frontend/node_modules/
@@ -20,3 +21,4 @@ frontend/dist/
 # Secrets
 *.env
 !*.env.example
+agent-service/**/__pycache__/
