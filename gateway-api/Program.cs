@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using GatewayApi.Data;
 using GatewayApi.Models;
 using GatewayApi.Services;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -359,6 +360,12 @@ static async Task<IResult> ProcessJobAsync(
         }
         catch (DbUpdateException exc)
         {
+            if (exc.InnerException is not SqlException { Number: 2627 or 2601 })
+            {
+                logger.LogError(exc, "Job {JobId} insert failed", jobId);
+                throw;
+            }
+
             logger.LogInformation(
                 exc,
                 "Job {JobId} insert lost race to a concurrent request; reloading winner row",
