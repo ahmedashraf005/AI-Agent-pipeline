@@ -20,6 +20,8 @@ public class JobProcessingLog
     public string? FinalSummary { get; set; }
     public int LoopIterations { get; set; }
     public string? Category { get; set; }
+    public bool? CacheHit { get; set; }
+    public string? NodeDurationsJson { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

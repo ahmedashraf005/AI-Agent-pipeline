@@ -6,6 +6,9 @@ state, what runs next?" Read top to bottom, it should read almost like
 the plain-English description from the original blueprint:
   Cache check -> Summarizer? -> Auditor -> Fact check -> Cache store?
 """
+import inspect
+import time
+from collections.abc import Callable
 from typing import Any
 
 from langgraph.checkpoint.redis.aio import AsyncRedisSaver
@@ -28,6 +31,20 @@ MAX_ITERATIONS = 3
 _checkpoint_context = None
 _checkpointer: AsyncRedisSaver | None = None
 compiled_graph: Any = None
+
+
+def timed_node(node_name: str, node: Callable[[AgentGraphState], Any]):
+    async def invoke(state: AgentGraphState) -> dict:
+        started_at = time.perf_counter()
+        result = node(state)
+        if inspect.isawaitable(result):
+            result = await result
+
+        node_durations = dict(state.get("node_durations", {}))
+        node_durations[node_name] = node_durations.get(node_name, 0.0) + (time.perf_counter() - started_at)
+        return {**result, "node_durations": node_durations}
+
+    return invoke
 
 
 def route_after_cache_check(state: AgentGraphState) -> str:
@@ -61,13 +78,13 @@ def route_after_fact_check(state: AgentGraphState) -> str:
 
 _builder = StateGraph(AgentGraphState)
 
-_builder.add_node("cache_check", cache_check_node)
-_builder.add_node("summarizer", summarizer_node)
-_builder.add_node("auditor", auditor_node)
-_builder.add_node("fact_checker", fact_checker_node)
-_builder.add_node("cache_store", cache_store_node)
-_builder.add_node("format_node", format_node)
-_builder.add_node("translate_node", translate_node)
+_builder.add_node("cache_check", timed_node("cache_check", cache_check_node))
+_builder.add_node("summarizer", timed_node("summarizer", summarizer_node))
+_builder.add_node("auditor", timed_node("auditor", auditor_node))
+_builder.add_node("fact_checker", timed_node("fact_checker", fact_checker_node))
+_builder.add_node("cache_store", timed_node("cache_store", cache_store_node))
+_builder.add_node("format_node", timed_node("format_node", format_node))
+_builder.add_node("translate_node", timed_node("translate_node", translate_node))
 
 _builder.set_entry_point("cache_check")
 _builder.add_conditional_edges(

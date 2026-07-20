@@ -21,6 +21,7 @@ class AgentGraphState(TypedDict):
     original_text: str          # immutable — never overwritten by any node
     draft_summary: Optional[str]
     cache_hit: Optional[bool]
+    node_durations: dict[str, float]
     audit_verdict: Optional[AuditVerdict]
     fact_check_result: Optional[FactCheckResult]
     iteration_count: int

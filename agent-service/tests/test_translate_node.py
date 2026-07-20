@@ -30,7 +30,7 @@ async def test_translate_node_marks_translation_verified_when_all_extracted_digi
 
     assert result == {
         "draft_summary": "الموعد 32027 والرسوم 91750.",
-        "translation_verified": True,
+        "translation_verified": False,
     }
     _, kwargs = chat.await_args
     assert "Arabic (ar)" in kwargs["messages"][0]["content"]

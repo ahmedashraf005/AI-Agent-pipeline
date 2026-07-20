@@ -65,6 +65,8 @@ def sse_event(
     content: str,
     iteration_count: int | None = None,
     category: str | None = None,
+    cache_hit: bool | None = None,
+    node_durations: dict[str, float] | None = None,
 ) -> str:
     """Matches docs/contracts/stream-chunk.schema.json exactly."""
     payload = {"jobId": job_id, "type": event_type, "content": content}
@@ -72,6 +74,10 @@ def sse_event(
         payload["iterationCount"] = iteration_count
     if category is not None:
         payload["category"] = category
+    if cache_hit is not None:
+        payload["cacheHit"] = cache_hit
+    if node_durations is not None:
+        payload["nodeDurations"] = node_durations
 
     return f"data: {json.dumps(payload)}\n\n"
 
@@ -123,6 +129,7 @@ async def stream_summary(job: JobSubmission):
                 "original_text": job.text,
                 "draft_summary": None,
                 "cache_hit": None,
+                "node_durations": {},
                 "audit_verdict": None,
                 "fact_check_result": None,
                 "iteration_count": 0,
@@ -219,10 +226,22 @@ async def stream_summary(job: JobSubmission):
                     and fact_check
                     and fact_check["status"] == "PASS"
                 ):
-                    yield sse_event(job.jobId, "status", "Completed")
+                    yield sse_event(
+                        job.jobId,
+                        "status",
+                        "Completed",
+                        cache_hit=state["cache_hit"],
+                        node_durations=state["node_durations"],
+                    )
                 else:
                     # Either retries were exhausted or deterministic verification failed.
-                    yield sse_event(job.jobId, "status", "AwaitingReview")
+                    yield sse_event(
+                        job.jobId,
+                        "status",
+                        "AwaitingReview",
+                        cache_hit=state["cache_hit"],
+                        node_durations=state["node_durations"],
+                    )
 
                 yield sse_event(job.jobId, "token", state["draft_summary"] or "")
 

@@ -205,6 +205,48 @@ app.MapGet("/api/jobs/stats", async (AppDbContext db) =>
         }
     }
 
+    var completedJobCount = await db.JobProcessingLogs
+        .AsNoTracking()
+        .CountAsync(job => job.Status == JobStatus.Completed);
+    var cacheHitCount = await db.JobProcessingLogs
+        .AsNoTracking()
+        .CountAsync(job => job.Status == JobStatus.Completed && job.CacheHit == true);
+    var cacheHitRate = completedJobCount == 0
+        ? (double?)null
+        : (double)cacheHitCount / completedJobCount;
+
+    var nodeDurationsJsonValues = await terminalJobs
+        .Where(job => job.NodeDurationsJson != null)
+        .Select(job => job.NodeDurationsJson!)
+        .ToListAsync();
+    var nodeDurationTotals = new Dictionary<string, double>();
+    var nodeDurationCounts = new Dictionary<string, int>();
+
+    foreach (var nodeDurationsJson in nodeDurationsJsonValues)
+    {
+        try
+        {
+            var nodeDurations = JsonSerializer.Deserialize<Dictionary<string, double>>(nodeDurationsJson);
+            if (nodeDurations is null) continue;
+
+            foreach (var (nodeName, duration) in nodeDurations)
+            {
+                if (!double.IsFinite(duration) || duration < 0) continue;
+
+                nodeDurationTotals[nodeName] = nodeDurationTotals.GetValueOrDefault(nodeName) + duration;
+                nodeDurationCounts[nodeName] = nodeDurationCounts.GetValueOrDefault(nodeName) + 1;
+            }
+        }
+        catch (JsonException)
+        {
+            // Historical or malformed telemetry must not make stats unavailable.
+        }
+    }
+
+    var averageNodeLatency = nodeDurationTotals
+        .OrderBy(pair => pair.Key)
+        .ToDictionary(pair => pair.Key, pair => pair.Value / nodeDurationCounts[pair.Key]);
+
     var outcomeBuckets = new[]
     {
         JobStatus.Completed,
@@ -243,7 +285,9 @@ app.MapGet("/api/jobs/stats", async (AppDbContext db) =>
             category,
             count = categoryCounts.GetValueOrDefault(category)
         }),
-        dailyVolume
+        dailyVolume,
+        cacheHitRate,
+        averageNodeLatency
     });
 });
 
@@ -414,6 +458,8 @@ static async Task<IResult> ProcessJobAsync(
     string? explicitErrorMessage = null;
     int? lastIterationCount = null;
     string? lastCategory = null;
+    bool? lastCacheHit = null;
+    string? lastNodeDurationsJson = null;
 
     try
     {
@@ -439,7 +485,9 @@ static async Task<IResult> ProcessJobAsync(
                 ref lastToken,
                 ref explicitErrorMessage,
                 ref lastIterationCount,
-                ref lastCategory);
+                ref lastCategory,
+                ref lastCacheHit,
+                ref lastNodeDurationsJson);
 
             if (lastIterationCount is not null)
             {
@@ -500,6 +548,16 @@ static async Task<IResult> ProcessJobAsync(
     if (lastCategory is not null)
     {
         jobLog.Category = lastCategory;
+    }
+
+    if (lastCacheHit is not null)
+    {
+        jobLog.CacheHit = lastCacheHit;
+    }
+
+    if (lastNodeDurationsJson is not null)
+    {
+        jobLog.NodeDurationsJson = lastNodeDurationsJson;
     }
 
     jobLog.UpdatedAt = DateTime.UtcNow;
@@ -563,7 +621,9 @@ static void TrackStreamChunk(
     ref string? lastToken,
     ref string? explicitErrorMessage,
     ref int? lastIterationCount,
-    ref string? lastCategory)
+    ref string? lastCategory,
+    ref bool? lastCacheHit,
+    ref string? lastNodeDurationsJson)
 {
     const string dataPrefix = "data: ";
     if (!line.StartsWith(dataPrefix, StringComparison.Ordinal))
@@ -587,6 +647,14 @@ static void TrackStreamChunk(
                 "AwaitingReview" => JobStatus.AwaitingReview,
                 _ => explicitTerminalStatus
             };
+
+            if (explicitTerminalStatus is not null)
+            {
+                lastCacheHit = chunk.CacheHit;
+                lastNodeDurationsJson = chunk.NodeDurations is null
+                    ? null
+                    : JsonSerializer.Serialize(chunk.NodeDurations);
+            }
         }
         else if (chunk?.Type.Equals("token", StringComparison.OrdinalIgnoreCase) == true)
         {
@@ -640,6 +708,12 @@ record JobRequest(
     string? OutputFormat,
     string? OutputLanguage);
 
-record StreamChunk(string Type, string Content, int? IterationCount, string? Category);
+record StreamChunk(
+    string Type,
+    string Content,
+    int? IterationCount,
+    string? Category,
+    bool? CacheHit,
+    Dictionary<string, double>? NodeDurations);
 
 record DailyVolumeBucket(string Date, int Count);
